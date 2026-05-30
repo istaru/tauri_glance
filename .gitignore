@@ -1,0 +1,5 @@
+.build/
+SwiftGlance.app/
+.claude/
+*.o
+*.d
