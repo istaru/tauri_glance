@@ -26,6 +26,7 @@ The icon lives in your menu bar and updates every second. No window, no Dock ico
 - **Network speed** — download & upload via `getifaddrs`, physical `en*` interfaces only
 - **Dark / Light mode** — automatic via `isTemplate = true`, no manual theming needed
 - **Launch at Login** — toggle from the menu (uses `SMAppService` on macOS 13+, LaunchAgent plist on macOS 12)
+- **Pinned position** — ⌘-drag the icon to your preferred spot once; macOS remembers it permanently across restarts and when other apps add their own status items
 - **Tiny footprint** — ~136 KB bundle, negligible CPU/RAM overhead
 
 ---
@@ -123,6 +124,8 @@ Right-click (or click) the status item to open the menu:
 |------|--------|
 | Launch at Login | Toggle auto-start on login |
 | Quit | Terminate the app |
+
+**Pinning the icon position**: ⌘-drag the SwiftGlance icon to your preferred position in the menu bar. macOS persists this via `autosaveName` and restores it on every launch — even after other apps add or remove their own status items.
 
 The menu title respects the system locale — Chinese or English.
 
