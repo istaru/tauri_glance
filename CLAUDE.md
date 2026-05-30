@@ -193,4 +193,3 @@ func speedLabel(_ kbps: Double) -> String {
 - [ ] 内存口径与「活动监视器」接近（active+wired+compressed）。
 - [ ] 菜单只有「退出」，点击能退出。
 - [ ] 打包体积 < 1MB。
-```
