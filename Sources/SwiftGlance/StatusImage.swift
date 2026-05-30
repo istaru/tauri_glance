@@ -3,52 +3,87 @@ import AppKit
 enum StatusImage {
 
     private static let font = NSFont.monospacedDigitSystemFont(ofSize: 8, weight: .bold)
-    private static let attrs: [NSAttributedString.Key: Any] = {
-        let para = NSMutableParagraphStyle()
-        para.alignment = .center
-        return [
-            .font: font,
-            .foregroundColor: NSColor.black,
-            .paragraphStyle: para
-        ]
-    }()
-    private static let colGap: CGFloat = 1
-    private static let lineH: CGFloat = NSAttributedString(string: "↓999K/s", attributes: attrs).size().height
-    private static let colW: CGFloat  = NSAttributedString(string: "↓999K/s", attributes: attrs).size().width
-    private static let imgW: CGFloat  = colW * 2 + colGap
-    private static let imgH: CGFloat  = lineH * 2 + 2
 
-    /// §5 速度格式化：输入 KB/s，整数显示，封顶 999。
-    static func speedLabel(_ kbps: Double) -> String {
-        if kbps < 1024 {
-            return "\(min(Int(kbps), 999))K/s"
-        } else {
-            return "\(min(Int(kbps / 1024), 999))M/s"
+    private static let lAttrs: [NSAttributedString.Key: Any] = {
+        let para = NSMutableParagraphStyle()
+        para.alignment = .left
+        return [.font: font, .foregroundColor: NSColor.black, .paragraphStyle: para]
+    }()
+
+    private static let rAttrs: [NSAttributedString.Key: Any] = {
+        let para = NSMutableParagraphStyle()
+        para.alignment = .right
+        return [.font: font, .foregroundColor: NSColor.black, .paragraphStyle: para]
+    }()
+
+    private static let colGap: CGFloat  = 3
+    private static let sidePad: CGFloat = 2
+
+    // 符号列宽：取所有符号中最宽的
+    private static let symbolW: CGFloat = ["↓", "↑", "c", "m"].map {
+        NSAttributedString(string: $0, attributes: lAttrs).size().width
+    }.max()!
+
+    // 数字列宽：最宽为两位整数"99"或小数".9"，取较大者
+    private static let numberW: CGFloat = [".9", "99"].map {
+        NSAttributedString(string: $0, attributes: lAttrs).size().width
+    }.max()!
+
+    // 单位列宽：取 B / K / M / G / % 中最宽的
+    private static let unitW: CGFloat = ["B", "K", "M", "G", "%"].map {
+        NSAttributedString(string: $0, attributes: lAttrs).size().width
+    }.max()!
+
+    private static let mainColW: CGFloat = symbolW + numberW + unitW
+    private static let lineH: CGFloat =
+        NSAttributedString(string: "↓", attributes: lAttrs).size().height
+    private static let imgW: CGFloat = sidePad + mainColW + colGap + mainColW + sidePad
+    private static let imgH: CGFloat = lineH * 2 + 2
+
+    private static func speedParts(_ bps: Double) -> (num: String, unit: String) {
+        let KB: Double = 1024
+        let MB: Double = 1024 * KB
+        let GB: Double = 1024 * MB
+        switch bps {
+        case ..<100:          return ("\(Int(bps))", "B")
+        case ..<KB:           return (".\(max(1, min(9, Int(bps / KB * 10))))", "K")
+        case ..<(100 * KB):   return ("\(Int(bps / KB))", "K")
+        case ..<MB:           return (".\(max(1, min(9, Int(bps / MB * 10))))", "M")
+        case ..<(100 * MB):   return ("\(Int(bps / MB))", "M")
+        case ..<GB:           return (".\(max(1, min(9, Int(bps / GB * 10))))", "G")
+        default:              return ("\(min(Int(bps / GB), 99))", "G")
         }
     }
 
-    /// §4 自绘两排两列模板图标（直接复用规格中已验证的实现）。
     static func makeStatusImage(
-        down: String,
-        up: String,
-        cpuVal: String,
-        memVal: String,
-        cpuShort: String = "C",
-        memShort: String = "M"
+        downloadBps: Double,
+        uploadBps: Double,
+        cpuPercent: Int,
+        memPercent: Int
     ) -> NSImage {
-        let cpuLabel = "\(cpuShort) \(cpuVal)%"
-        let memLabel = "\(memShort) \(memVal)%"
-        let row1Y = lineH + 2
+        let (downNum, downUnit) = speedParts(downloadBps)
+        let (upNum,   upUnit)   = speedParts(uploadBps)
+        let cpuNum = "\(cpuPercent)"
+        let memNum = "\(memPercent)"
+
+        let row1Y  = lineH + 2
+        let leftX  = sidePad
+        let rightX = sidePad + mainColW + colGap
+
+        func drawCell(sym: String, num: String, unit: String, x: CGFloat, y: CGFloat) {
+            NSAttributedString(string: sym,  attributes: lAttrs)
+                .draw(in: CGRect(x: x,                        y: y, width: symbolW, height: lineH))
+            NSAttributedString(string: num,  attributes: rAttrs)
+                .draw(in: CGRect(x: x + symbolW,              y: y, width: numberW, height: lineH))
+            NSAttributedString(string: unit, attributes: lAttrs)
+                .draw(in: CGRect(x: x + symbolW + numberW,    y: y, width: unitW,   height: lineH))
+        }
 
         let img = NSImage(size: NSSize(width: imgW, height: imgH), flipped: false) { _ in
-            NSAttributedString(string: down, attributes: attrs)
-                .draw(in: CGRect(x: 0, y: row1Y, width: colW, height: lineH))
-            NSAttributedString(string: up, attributes: attrs)
-                .draw(in: CGRect(x: colW + colGap, y: row1Y, width: colW, height: lineH))
-            NSAttributedString(string: cpuLabel, attributes: attrs)
-                .draw(in: CGRect(x: 0, y: 0, width: colW, height: lineH))
-            NSAttributedString(string: memLabel, attributes: attrs)
-                .draw(in: CGRect(x: colW + colGap, y: 0, width: colW, height: lineH))
+            drawCell(sym: "↓", num: downNum, unit: downUnit, x: leftX,  y: row1Y)
+            drawCell(sym: "c", num: cpuNum,  unit: "%",      x: leftX,  y: 0)
+            drawCell(sym: "↑", num: upNum,   unit: upUnit,   x: rightX, y: row1Y)
+            drawCell(sym: "m", num: memNum,  unit: "%",      x: rightX, y: 0)
             return true
         }
         img.isTemplate = true

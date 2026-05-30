@@ -69,12 +69,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func refresh() {
         let m = monitor.sample()
-        let down = "↓" + StatusImage.speedLabel(m.downloadKBps)
-        let up   = "↑" + StatusImage.speedLabel(m.uploadKBps)
-        let cpu  = "\(Int(m.cpuUsage))"
-        let mem  = "\(Int(m.memoryUsage))"
         statusItem.button?.image = StatusImage.makeStatusImage(
-            down: down, up: up, cpuVal: cpu, memVal: mem
+            downloadBps: m.downloadBps,
+            uploadBps:   m.uploadBps,
+            cpuPercent:  Int(m.cpuUsage),
+            memPercent:  Int(m.memoryUsage)
         )
     }
 

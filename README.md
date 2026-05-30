@@ -9,10 +9,10 @@ A lightweight macOS menu bar app that displays real-time CPU usage, memory usage
 ## Preview
 
 ```
-┌─────────────────────┐
-│  ↓123K/s  ↑45K/s   │  ← row 1: network speed
-│  C 78%    M 56%     │  ← row 2: CPU / memory
-└─────────────────────┘
+┌──────────────────────┐
+│  ↓  27  K   ↑  .4  M │  ← row 1: network speed
+│  c   8  %   m  57  % │  ← row 2: CPU / memory
+└──────────────────────┘
 ```
 
 The icon lives in your menu bar and updates every second. No window, no Dock icon, no ⌘Tab entry.
@@ -23,11 +23,12 @@ The icon lives in your menu bar and updates every second. No window, no Dock ico
 
 - **CPU usage** — all-core average via `host_processor_info` (Activity Monitor algorithm)
 - **Memory usage** — active + wired + compressed pages / total (`host_statistics64`)
-- **Network speed** — download & upload via `getifaddrs`, physical `en*` interfaces only
+- **Network speed** — download & upload via `getifaddrs`, physical `en*` interfaces only; full range from B/s to GB/s
+- **Smart speed format** — numbers always 1–2 digits; switches to `.X` fractional notation when crossing unit boundaries (e.g. `↓.4M` = 400 KB/s)
 - **Dark / Light mode** — automatic via `isTemplate = true`, no manual theming needed
 - **Launch at Login** — toggle from the menu (uses `SMAppService` on macOS 13+, LaunchAgent plist on macOS 12)
 - **Pinned position** — ⌘-drag the icon to your preferred spot once; macOS remembers it permanently across restarts and when other apps add their own status items
-- **Tiny footprint** — ~136 KB bundle, negligible CPU/RAM overhead
+- **Tiny footprint** — ~152 KB bundle, negligible CPU/RAM overhead
 
 ---
 
@@ -101,17 +102,31 @@ used = (active_count + wire_count + compressor_page_count) × page_size
 This matches Activity Monitor's "used memory" definition.
 
 ### Network
-`getifaddrs()` with `AF_LINK` socket addresses, filtered to `en*` interfaces (Ethernet / Wi-Fi). Byte counters are diffed each second to produce KB/s rates. Handles counter wrap-around gracefully.
+`getifaddrs()` with `AF_LINK` socket addresses, filtered to `en*` interfaces (Ethernet / Wi-Fi). Raw byte counters are diffed each second to produce bytes/s. Handles counter wrap-around gracefully.
+
+### Speed Formatting
+Numbers are always kept to 1–2 digits. When a value exceeds 2 digits in the current unit, it switches to a `.X` fractional representation of the next unit:
+
+| Range | Display | Example |
+|-------|---------|---------|
+| 0–99 B/s | `XXB` | `63B` |
+| 100–1023 B/s | `.XK` | `.5K` |
+| 1–99 KB/s | `XXK` | `45K` |
+| 100KB–1023KB/s | `.XM` | `.4M` |
+| 1–99 MB/s | `XXM` | `12M` |
+| 100MB–1023MB/s | `.XG` | `.3G` |
+| ≥ 1 GB/s | `XXG` | `2G` |
 
 ### Status Icon
-Drawn with `NSAttributedString` into an `NSImage` at runtime. Column width is fixed to the widest possible string (`↓999K/s`) so digits never cause layout jitter. `isTemplate = true` lets the system apply the correct foreground color for any menu bar appearance.
+Drawn with `NSAttributedString` into an `NSImage` at runtime. Each column is split into three sub-columns — **symbol** (left-aligned), **number** (right-aligned), **unit** (left-aligned) — so all rows align precisely regardless of value width. `isTemplate = true` lets the system apply the correct foreground color for any menu bar appearance.
 
 ---
 
 ## Performance Optimizations
 
 - `hw.memsize` and `vm_kernel_page_size` are read once at init and cached — no repeated syscalls
-- `NSFont`, `NSMutableParagraphStyle`, `attrs` dictionary, and icon dimensions are `static let` — allocated once, not every second
+- `NSFont`, attributes dictionaries, and all icon dimensions are `static let` — allocated once, not every second
+- Network sampling returns raw bytes/s, avoiding premature precision loss from early division
 - No subprocess spawning (unlike shell-command approaches), no polling threads
 
 ---

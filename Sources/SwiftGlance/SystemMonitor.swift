@@ -7,8 +7,8 @@ struct Metrics {
     var memoryUsage: Double   // 0–100 (%)
     var memoryUsed: UInt64    // bytes
     var memoryTotal: UInt64   // bytes
-    var downloadKBps: Double  // KB/s
-    var uploadKBps: Double    // KB/s
+    var downloadBps: Double   // bytes/s
+    var uploadBps: Double     // bytes/s
 }
 
 /// 系统数据采集（§3，采用原生 API 法 B）。
@@ -45,8 +45,8 @@ final class SystemMonitor {
             memoryUsage: memPct,
             memoryUsed: used,
             memoryTotal: total,
-            downloadKBps: rx,
-            uploadKBps: tx
+            downloadBps: rx,
+            uploadBps: tx
         )
     }
 
@@ -135,7 +135,7 @@ final class SystemMonitor {
 
     // MARK: - 3.3 网络（getifaddrs + AF_LINK）
 
-    private func readNetworkSpeed() -> (downloadKBps: Double, uploadKBps: Double) {
+    private func readNetworkSpeed() -> (downloadBps: Double, uploadBps: Double) {
         var rx: UInt64 = 0
         var tx: UInt64 = 0
 
@@ -177,8 +177,8 @@ final class SystemMonitor {
         previousRxBytes = rx
         previousTxBytes = tx
 
-        let down = max(0, Double(dRx) / 1024.0)
-        let up   = max(0, Double(dTx) / 1024.0)
+        let down = max(0, Double(dRx))
+        let up   = max(0, Double(dTx))
         return (down, up)
     }
 }
