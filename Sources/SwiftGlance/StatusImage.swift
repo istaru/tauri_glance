@@ -80,10 +80,10 @@ enum StatusImage {
         }
 
         let img = NSImage(size: NSSize(width: imgW, height: imgH), flipped: false) { _ in
-            drawCell(sym: "↓", num: downNum, unit: downUnit, x: leftX,  y: row1Y)
-            drawCell(sym: "c", num: cpuNum,  unit: "%",      x: leftX,  y: 0)
-            drawCell(sym: "↑", num: upNum,   unit: upUnit,   x: rightX, y: row1Y)
-            drawCell(sym: "m", num: memNum,  unit: "%",      x: rightX, y: 0)
+            drawCell(sym: "c", num: cpuNum,  unit: "%",      x: leftX,  y: row1Y)
+            drawCell(sym: "↓", num: downNum, unit: downUnit, x: leftX,  y: 0)
+            drawCell(sym: "m", num: memNum,  unit: "%",      x: rightX, y: row1Y)
+            drawCell(sym: "↑", num: upNum,   unit: upUnit,   x: rightX, y: 0)
             return true
         }
         img.isTemplate = true
