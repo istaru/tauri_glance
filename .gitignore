@@ -3,3 +3,4 @@ SwiftGlance.app/
 .claude/
 *.o
 *.d
+.DS_Store

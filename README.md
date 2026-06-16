@@ -44,7 +44,16 @@ The icon lives in your menu bar and updates every second. No window, no Dock ico
 
 ## Installation
 
-### Option A — Build from source
+### Option A — Download pre-built binary (easiest)
+
+1. Go to the [Releases page](https://github.com/istaru/swift_glance/releases/latest)
+2. Download `SwiftGlance.zip` and unzip it
+3. Move `SwiftGlance.app` to `/Applications/`
+4. Open it — macOS may ask you to confirm the first launch in System Settings → Privacy & Security
+
+The release binary is a **Universal Binary** (Apple Silicon + Intel).
+
+### Option B — Build from source
 
 ```bash
 git clone https://github.com/istaru/swift_glance.git
@@ -52,13 +61,6 @@ cd swift_glance
 bash build_app.sh
 cp -r SwiftGlance.app /Applications/
 open /Applications/SwiftGlance.app
-```
-
-### Option B — Manual build steps
-
-```bash
-swift build -c release
-# The compiled binary is at .build/release/SwiftGlance
 ```
 
 ---

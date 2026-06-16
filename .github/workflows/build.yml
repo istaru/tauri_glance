@@ -16,8 +16,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build app bundle
-        run: bash build_app.sh
+      - name: Set version
+        id: version
+        run: echo "VERSION=0.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build universal app bundle
+        run: bash build_app.sh ${{ steps.version.outputs.VERSION }}
 
       - name: Zip artifact
         run: zip -r SwiftGlance.zip SwiftGlance.app
@@ -27,7 +31,7 @@ jobs:
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.${{ github.run_number }}
-          name: "v0.${{ github.run_number }}"
+          tag_name: v${{ steps.version.outputs.VERSION }}
+          name: "v${{ steps.version.outputs.VERSION }}"
           files: SwiftGlance.zip
           generate_release_notes: true
