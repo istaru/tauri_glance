@@ -15,6 +15,15 @@
 
 ## 2. 数据采集（SystemMonitor.swift）
 
+### 模块结构（内部 seam）
+
+`SystemMonitor` 是对外门面，interface 仅 `sample() -> Metrics`，实现内部沿一道 seam 拆成两块：
+
+- **`CounterSource`（端口）** + **`LiveCounters`（活体 adapter）** —— 读原始累计计数器（`RawCounters`），碰 syscall，无差分状态。
+- **`RateDiffer`（纯差分）** —— 持有差分历史，把相邻两次 `RawCounters` 变成 `Metrics`。CPU 多核平均、网络回绕、首样本归零、内存百分比口径全在此处。
+
+测试通过 `SystemMonitor(source:)` 注入脚本化 adapter，无需碰活体硬件即可覆盖差分 edge case（见 `Tests/SwiftGlanceTests/RateDifferTests.swift`）。
+
 ### Metrics 结构体
 
 ```swift
@@ -30,7 +39,7 @@ struct Metrics {
 
 ### 性能优化
 
-- `memoryTotal`（`hw.memsize`）和 `pageSize`（`vm_kernel_page_size`）在 `init()` 里一次性读取并缓存，每秒采样不再重复 syscall。
+- `memoryTotal`（`hw.memsize`）和 `pageSize`（`vm_kernel_page_size`）在 `LiveCounters.init()` 里一次性读取并缓存，每秒采样不再重复 syscall。
 
 ### 3.1 CPU
 
@@ -51,7 +60,7 @@ used = (active_count + wire_count + compressor_page_count) × pageSize
 ### 3.3 网络
 
 `getifaddrs()` + `AF_LINK`，只统计 `en*` 物理接口（以太网/Wi-Fi），跳过 lo0。  
-返回**原始 bytes/s**（不除以 1024），由 `StatusImage.speedParts()` 按档格式化。  
+返回**原始 bytes/s**（不除以 1024），由 `SpeedFormatter.format()` 按档格式化。  
 首次采样无历史，速度为 0；处理计数回绕（差为负时按 0）。
 
 ---
@@ -113,7 +122,7 @@ static func makeStatusImage(
 
 ---
 
-## 4. 网速格式化（speedParts）
+## 4. 网速格式化（SpeedFormatter.swift）
 
 输入为 **bytes/s**，数字始终控制在 **1–2 位**，跨档用 `.X` 小数表示：
 
@@ -148,9 +157,9 @@ static func makeStatusImage(
 
 | 优化项 | 位置 |
 |--------|------|
-| `hw.memsize` 和 `vm_kernel_page_size` 只在 init 读一次 | `SystemMonitor.init()` |
+| `hw.memsize` 和 `vm_kernel_page_size` 只在 init 读一次 | `LiveCounters.init()` |
 | `NSFont`、`attrs` 字典、图标尺寸全部 `static let` | `StatusImage` |
-| 网络速度返回原始 bytes/s，避免提前精度损失 | `SystemMonitor.readNetworkSpeed()` |
+| 网络速度返回原始 bytes/s，避免提前精度损失 | `LiveCounters.readNetwork()` |
 | `isChinese()` 每次 `buildMenu()` 只调用一次 | `AppDelegate.buildMenu()` |
 
 ---
@@ -158,12 +167,15 @@ static func makeStatusImage(
 ## 7. 构建与安装
 
 ```bash
-bash build_app.sh          # release 构建 + 组装 .app + ad-hoc 签名
-cp -r SwiftGlance.app /Applications/
-open /Applications/SwiftGlance.app
+bash build_app.sh          # release 构建 + 组装 看一眼.app + ad-hoc 签名
+cp -r 看一眼.app /Applications/
+open /Applications/看一眼.app
 ```
 
-包体积目标：< 1MB（当前约 152KB）。
+- **应用名**：对外显示名为「看一眼」（`CFBundleName`/`CFBundleDisplayName`）；可执行名与 Bundle ID 保持 ASCII（`SwiftGlance` / `com.swiftglance.menubar`），不随显示名变动。
+- **应用图标**：`Resources/AppIcon.icns`（极简仪表盘），由 `Resources/AppIcon/make_icon.swift` 渲染主图后经 `sips` + `iconutil` 生成；菜单栏内的动态文字图标不受影响。
+
+包体积目标：< 1MB（当前约 720KB，含 .icns）。
 
 ---
 
@@ -178,3 +190,19 @@ open /Applications/SwiftGlance.app
 - [x] 菜单栏图标位置持久化（autosaveName，⌘ 拖拽后永久固定）
 - [x] 菜单：开机启动开关 + 退出
 - [x] 打包体积 < 1MB
+
+---
+
+## Agent skills
+
+### Issue tracker
+
+Issue 追踪在仓库的 GitHub Issues（使用 `gh` CLI）。详见 `docs/agents/issue-tracker.md`。
+
+### Triage 标签
+
+使用五个标准角色的默认标签名（`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`）。详见 `docs/agents/triage-labels.md`。
+
+### 领域文档
+
+单上下文布局（根目录 `CONTEXT.md` + `docs/adr/`）。详见 `docs/agents/domain.md`。

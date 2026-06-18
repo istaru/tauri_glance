@@ -48,7 +48,7 @@ The icon lives in your menu bar and updates every second. No window, no Dock ico
 
 1. Go to the [Releases page](https://github.com/istaru/swift_glance/releases/latest)
 2. Download `SwiftGlance.zip` and unzip it
-3. Move `SwiftGlance.app` to `/Applications/`
+3. Move `看一眼.app` to `/Applications/`
 4. Open it — macOS may ask you to confirm the first launch in System Settings → Privacy & Security
 
 The release binary is a **Universal Binary** (Apple Silicon + Intel).
@@ -59,8 +59,8 @@ The release binary is a **Universal Binary** (Apple Silicon + Intel).
 git clone https://github.com/istaru/swift_glance.git
 cd swift_glance
 bash build_app.sh
-cp -r SwiftGlance.app /Applications/
-open /Applications/SwiftGlance.app
+cp -r 看一眼.app /Applications/
+open /Applications/看一眼.app
 ```
 
 ---
@@ -153,7 +153,7 @@ The menu title respects the system locale — Chinese or English.
 `build_app.sh` performs an ad-hoc code signature (`codesign --sign -`) sufficient for local use. For distribution, replace with a Developer ID signature:
 
 ```bash
-codesign --force --deep --sign "Developer ID Application: Your Name (TEAMID)" SwiftGlance.app
+codesign --force --deep --sign "Developer ID Application: Your Name (TEAMID)" 看一眼.app
 ```
 
 ---

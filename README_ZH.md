@@ -46,7 +46,7 @@ SwiftGlance 是一款极简 macOS 菜单栏系统监控工具，实时显示 CPU
 
 1. 前往 [Releases 页面](https://github.com/istaru/swift_glance/releases/latest)
 2. 下载 `SwiftGlance.zip` 并解压
-3. 将 `SwiftGlance.app` 移入 `/Applications/`
+3. 将 `看一眼.app` 移入 `/Applications/`
 4. 打开应用——首次启动 macOS 可能提示在「系统设置 → 隐私与安全性」中确认
 
 发布包为 **Universal Binary**，同时支持 Apple Silicon 与 Intel。
@@ -57,8 +57,8 @@ SwiftGlance 是一款极简 macOS 菜单栏系统监控工具，实时显示 CPU
 git clone https://github.com/istaru/swift_glance.git
 cd swift_glance
 bash build_app.sh
-cp -r SwiftGlance.app /Applications/
-open /Applications/SwiftGlance.app
+cp -r 看一眼.app /Applications/
+open /Applications/看一眼.app
 ```
 
 ---

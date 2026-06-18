@@ -14,6 +14,11 @@ let package = Package(
                 .linkedFramework("AppKit"),
                 .linkedFramework("ServiceManagement")
             ]
+        ),
+        .testTarget(
+            name: "SwiftGlanceTests",
+            dependencies: ["SwiftGlance"],
+            path: "Tests/SwiftGlanceTests"
         )
     ]
 )

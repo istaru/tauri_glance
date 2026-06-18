@@ -4,8 +4,11 @@
 set -e
 cd "$(dirname "$0")"
 
+# APP_NAME：可执行名 / 内部标识（保持 ASCII，稳定，勿改）
+# DISPLAY_NAME：对外显示的中文名（访达 / 启动台 / 关于面板）
 APP_NAME="SwiftGlance"
-APP="${APP_NAME}.app"
+DISPLAY_NAME="看一眼"
+APP="${DISPLAY_NAME}.app"
 VERSION="${1:-1.0.0}"
 
 echo "==> swift build -c release (arm64 + x86_64)"
@@ -21,7 +24,9 @@ lipo -create \
 echo "==> 组装 ${APP}"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/Resources"
 cp ".build/release-universal-${APP_NAME}" "$APP/Contents/MacOS/$APP_NAME"
+cp "Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -29,9 +34,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>${APP_NAME}</string>
+    <string>${DISPLAY_NAME}</string>
     <key>CFBundleDisplayName</key>
-    <string>${APP_NAME}</string>
+    <string>${DISPLAY_NAME}</string>
     <key>CFBundleIdentifier</key>
     <string>com.swiftglance.menubar</string>
     <key>CFBundleVersion</key>
@@ -40,6 +45,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <string>${VERSION}</string>
     <key>CFBundleExecutable</key>
     <string>${APP_NAME}</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>

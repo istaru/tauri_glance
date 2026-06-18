@@ -3,7 +3,7 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var statusItem: NSStatusItem!
-    private let monitor = SystemMonitor()
+    private let pipeline = StatusPipeline(sample: SystemMonitor().sample)
     private var timer: Timer?
     private var launchAtLoginItem: NSMenuItem!
 
@@ -68,13 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - 每秒刷新
 
     private func refresh() {
-        let m = monitor.sample()
-        statusItem.button?.image = StatusImage.makeStatusImage(
-            downloadBps: m.downloadBps,
-            uploadBps:   m.uploadBps,
-            cpuPercent:  Int(m.cpuUsage),
-            memPercent:  Int(m.memoryUsage)
-        )
+        statusItem.button?.image = pipeline.tick()
     }
 
     private func isChinese() -> Bool {

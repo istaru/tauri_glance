@@ -24,7 +24,7 @@ jobs:
         run: bash build_app.sh ${{ steps.version.outputs.VERSION }}
 
       - name: Zip artifact
-        run: zip -r SwiftGlance.zip SwiftGlance.app
+        run: zip -r SwiftGlance.zip 看一眼.app
 
       # PR 只验证能否编译，不发布 Release
       - name: Create Release

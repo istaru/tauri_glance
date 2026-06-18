@@ -1,6 +1,11 @@
 .build/
 SwiftGlance.app/
+看一眼.app/
 .claude/
 *.o
 *.d
 .DS_Store
+
+# 图标主图为可由 make_icon.swift 重新生成；只跟踪 AppIcon.icns
+Resources/AppIcon/icon_1024.png
+Resources/AppIcon/*.iconset/
