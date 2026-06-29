@@ -1,11 +1,29 @@
-.build/
-SwiftGlance.app/
-看一眼.app/
-.claude/
-*.o
-*.d
+# macOS
 .DS_Store
+.claude/
 
-# 图标主图为可由 make_icon.swift 重新生成；只跟踪 AppIcon.icns
-Resources/AppIcon/icon_1024.png
-Resources/AppIcon/*.iconset/
+# Node
+node_modules
+dist
+dist-ssr
+*.local
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Tauri / Rust
+src-tauri/target/

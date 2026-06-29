@@ -1,75 +1,44 @@
-# SwiftGlance 中文介绍
+# 看一眼
 
-SwiftGlance 是一款极简 macOS 菜单栏系统监控工具，实时显示 CPU 占用、内存使用率、下载/上传网速，全部压缩进一个两行图标里。纯 Swift + AppKit 实现，无 Electron、无 Flutter、无臃肿运行时。
+极简 macOS 菜单栏系统监控工具，实时显示 CPU 占用、内存使用率、下载/上传网速，全部压缩进一个两行图标里。基于 Rust + Tauri v2，无 Electron、无臃肿运行时。
 
 ---
 
-## 界面预览
+## 效果预览
 
 ```
-┌──────────────────────┐
-│  ↓  27  K   ↑  .4  M │  ← 第一排：网络速度
-│  c   8  %   m  57  % │  ← 第二排：CPU / 内存
-└──────────────────────┘
+c  8%  m 57%
+↓ 27K  ↑ .4M
 ```
 
-图标常驻菜单栏，每秒刷新。没有主窗口、没有 Dock 图标、不出现在 ⌘Tab 切换列表。
+## 功能
 
----
+- CPU 使用率（多核平均）
+- 内存占用（口径与活动监视器一致：active + wired + compressed）
+- 网络上下行速度（仅统计物理网卡，自动格式化为 B/K/M/G）
+- 每秒刷新，深/浅色菜单栏自动适配
+- 开机启动开关，菜单语言跟随系统（中/英）
+- 无 Dock 图标，无窗口
 
-## 功能一览
+## 安装
 
-| 功能 | 说明 |
-|------|------|
-| CPU 使用率 | 全核平均，采用 `host_processor_info`（与活动监视器算法一致） |
-| 内存使用率 | active + wired + compressed 页数之和 / 总量 |
-| 网络速度 | 仅统计 `en*` 物理接口（以太网/Wi-Fi），全档覆盖 B/s → KB/s → MB/s → GB/s |
-| 智能网速格式 | 数字始终 1–2 位；超出 2 位时自动切换到上一级单位的小数形式（如 `↓.4M` = 400 KB/s） |
-| 深/浅色自适应 | `isTemplate = true`，系统自动处理颜色反相 |
-| 开机启动 | 菜单中一键切换（macOS 13+ 用 `SMAppService`，12 用 LaunchAgent） |
-| 位置记忆 | 用 `⌘ + 拖拽` 把图标移到喜欢的位置，macOS 永久记住，重启或其他 app 启动都不会再跑位 |
-| 极小体积 | 安装包约 152 KB |
+从 [Releases](../../releases) 下载最新 `.zip` 或 `.dmg`，解压后把 `看一眼.app` 拖入应用程序文件夹即可。
 
----
-
-## 系统要求
-
-- macOS 12.0 Monterey 及以上
-- Swift 5.9+（使用 `swift build` 编译）
-- 支持 Apple Silicon 与 Intel
-
----
-
-## 安装方式
-
-### 方式一：下载预构建包（推荐）
-
-1. 前往 [Releases 页面](https://github.com/istaru/swift_glance/releases/latest)
-2. 下载 `SwiftGlance.zip` 并解压
-3. 将 `看一眼.app` 移入 `/Applications/`
-4. 打开应用——首次启动 macOS 可能提示在「系统设置 → 隐私与安全性」中确认
-
-发布包为 **Universal Binary**，同时支持 Apple Silicon 与 Intel。
-
-### 方式二：从源码构建
+## 从源码构建
 
 ```bash
-git clone https://github.com/istaru/swift_glance.git
-cd swift_glance
-bash build_app.sh
-cp -r 看一眼.app /Applications/
-open /Applications/看一眼.app
+npm ci
+npx tauri build
+# 产物在 src-tauri/target/release/bundle/macos/
 ```
 
----
+## 开发调试
 
-## 技术实现简述
+```bash
+npm ci
+npx tauri dev
+```
 
-- **CPU**：`host_processor_info` 差分计算，首秒返回 0
-- **内存**：`host_statistics64` 读页数，总量启动时一次性缓存
-- **网络**：`getifaddrs` + `AF_LINK`，差分计算原始字节/s，再按档格式化
-- **图标**：符号/数字/单位三子列独立绘制，数字右对齐保证精确对齐不抖动，`isTemplate` 自适应外观
+## 协议
 
----
-
-> 英文完整文档请见 [README.md](README.md)
+[MIT](LICENSE)

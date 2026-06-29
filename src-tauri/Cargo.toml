@@ -1,0 +1,20 @@
+[package]
+name = "tauri-glance"
+version = "0.1.0"
+description = "看一眼 — 跨平台系统监控"
+authors = ["Julian"]
+edition = "2021"
+
+[lib]
+name = "tauri_glance_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-autostart = "2"
+sysinfo = "0.33"
+font8x8 = { version = "0.3", default-features = false, features = ["unicode"] }
+

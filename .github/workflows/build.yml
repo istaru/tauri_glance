@@ -2,36 +2,59 @@ name: Build & Release
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   build:
-    runs-on: macos-latest
     permissions:
       contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest      # → .app + .dmg (aarch64)
+          - os: windows-latest    # → .exe (NSIS) + .msi
+          - os: ubuntu-22.04      # → .deb + .AppImage
+
+    runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set version
-        id: version
-        run: echo "VERSION=0.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
-
-      - name: Build universal app bundle
-        run: bash build_app.sh ${{ steps.version.outputs.VERSION }}
-
-      - name: Zip artifact
-        run: zip -r SwiftGlance.zip 看一眼.app
-
-      # PR 只验证能否编译，不发布 Release
-      - name: Create Release
-        if: github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v2
+      - uses: actions/setup-node@v4
         with:
-          tag_name: v${{ steps.version.outputs.VERSION }}
-          name: "v${{ steps.version.outputs.VERSION }}"
-          files: SwiftGlance.zip
-          generate_release_notes: true
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - run: npm ci
+
+      # PR：只验证能否编译，不发布
+      - name: Build (PR)
+        if: github.ref != 'refs/heads/main'
+        run: npx tauri build
+
+      # main：编译并自动上传到 Release
+      - name: Build & Release
+        if: github.ref == 'refs/heads/main'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v0.${{ github.run_number }}
+          releaseName: v0.${{ github.run_number }}
+          releaseDraft: false
+          prerelease: false

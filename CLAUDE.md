@@ -193,6 +193,55 @@ open /Applications/看一眼.app
 
 ---
 
+---
+
+## 9. Tauri 跨平台版（tauri-glance/）
+
+> Rust + Tauri v2 重写，目标支持 Win / Linux / Mac。功能与 Swift 版对齐，但实现细节不同。
+
+### 9.1 架构
+
+- **纯托盘应用**：`windows: []`，无 WebView 窗口；`ActivationPolicy::Accessory`（macOS）
+- **全 Rust 渲染**：`font8x8` 位图字体直接写像素缓冲区，不依赖 WebView/Canvas
+- **后台线程**：每秒采集 → 渲染 → `run_on_main_thread` 闭包内同步调用 `set_icon` + `set_icon_as_template`
+
+### 9.2 深/浅色适配要点
+
+`set_icon()` 每次重置 template 状态，必须紧随调用 `set_icon_as_template(true)`。两次调用须在同一个 `run_on_main_thread` 闭包内执行，CoreAnimation 才能将其合并为单次 display commit，避免黑白闪动。切勿将两者分开 dispatch。
+
+图标像素颜色为**黑色**（`0,0,0,255`），透明底，由 macOS template 机制自动在深色模式下反相为白色。
+
+### 9.3 内存口径
+
+macOS 上通过 `macos_mem::read()`（`host_statistics64` + `vm_kernel_page_size` + `sysctlbyname("hw.memsize")`）直接采集，口径 = `active + wired + compressor`，与活动监视器一致。非 macOS 降级使用 sysinfo。
+
+### 9.4 网络接口
+
+与 Swift 版相同：只统计 `en*` 前缀物理接口（以太网/Wi-Fi），排除 VPN（`utun*`）、回环（`lo`）等。
+
+### 9.5 菜单语言
+
+`is_chinese()` 读 `defaults read -g AppleLanguages`，首选语言以 `zh` 开头则显示中文，否则英文。
+
+### 9.6 构建
+
+```bash
+cd tauri-glance
+npx tauri build
+# 产物：src-tauri/target/release/bundle/macos/看一眼.app
+#       src-tauri/target/release/bundle/dmg/看一眼_0.1.0_aarch64.dmg
+```
+
+### 9.7 与 Swift 版的已知差异
+
+| 项目 | Swift 版 | Tauri 版 |
+|------|----------|----------|
+| 字体 | `monospacedDigitSystemFont(8, .bold)` | `font8x8` 位图字体 |
+| 图标位置持久化 | `autosaveName` | 不支持（Tauri 无此 API） |
+| 平台 | macOS only | macOS / Windows / Linux |
+
+---
+
 ## Agent skills
 
 ### Issue tracker
