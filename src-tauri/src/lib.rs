@@ -9,10 +9,23 @@ use tauri::{
     AppHandle, Manager,
 };
 
-// ── 图标尺寸（物理像素，SCALE=2 对应 Retina） ─────────────────────────────────
+// ── 图标尺寸（平台相关）────────────────────────────────────────────────────────
+// macOS：宽条形，适配菜单栏（SCALE=2 对应 Retina）
+#[cfg(target_os = "macos")]
 const SCALE: u32 = 2;
+#[cfg(target_os = "macos")]
 const ICON_W: u32 = 72;
+#[cfg(target_os = "macos")]
 const ICON_H: u32 = 20;
+
+// Windows/Linux：32×32 正方形，适配系统托盘图标槽
+#[cfg(not(target_os = "macos"))]
+const SCALE: u32 = 1;
+#[cfg(not(target_os = "macos"))]
+const ICON_W: u32 = 32;
+#[cfg(not(target_os = "macos"))]
+const ICON_H: u32 = 32;
+
 const PW: u32 = ICON_W * SCALE;
 const PH: u32 = ICON_H * SCALE;
 
@@ -48,7 +61,7 @@ fn get_glyph(c: char) -> [u8; 8] {
     }
 }
 
-fn draw_char(buf: &mut [u8], x: u32, y: u32, glyph: &[u8; 8]) {
+fn draw_char(buf: &mut [u8], x: u32, y: u32, glyph: &[u8; 8], r: u8, g: u8, b: u8) {
     for (row, &bits) in glyph.iter().enumerate() {
         for col in 0..8u32 {
             if bits & (1 << col) != 0 {
@@ -58,10 +71,10 @@ fn draw_char(buf: &mut [u8], x: u32, y: u32, glyph: &[u8; 8]) {
                         let py = y + row as u32 * SCALE + sy;
                         if px < PW && py < PH {
                             let i = ((py * PW + px) * 4) as usize;
-                            buf[i]     = 0;   // R — 黑色，配合 template 模式深/浅色自动适配
-                            buf[i + 1] = 0;   // G
-                            buf[i + 2] = 0;   // B
-                            buf[i + 3] = 255; // A
+                            buf[i]     = r;
+                            buf[i + 1] = g;
+                            buf[i + 2] = b;
+                            buf[i + 3] = 255;
                         }
                     }
                 }
@@ -90,21 +103,40 @@ fn format_speed(bps: f64) -> (String, &'static str) {
 fn render_icon(cpu: i32, mem: i32, down_bps: f64, up_bps: f64) -> Vec<u8> {
     let (d_num, d_unit) = format_speed(down_bps);
     let (u_num, u_unit) = format_speed(up_bps);
-
-    let row1 = format!("c{:>2}%m{:>2}%", cpu.min(99), mem.min(99));
-    let row2 = format!("↓{:>2}{}↑{:>2}{}", d_num, d_unit, u_num, u_unit);
-
     let mut buf = vec![0u8; (PW * PH * 4) as usize];
-    let left  = SCALE * 2;
-    let row1_y = SCALE * 2;
-    let row2_y = SCALE * 12;
 
-    for (i, c) in row1.chars().enumerate() {
-        draw_char(&mut buf, left + i as u32 * 8 * SCALE, row1_y, &get_glyph(c));
+    // macOS：宽条形两行布局，黑色字体（配合 template 模式自动深/浅色适配）
+    #[cfg(target_os = "macos")]
+    {
+        let row1 = format!("c{:>2}%m{:>2}%", cpu.min(99), mem.min(99));
+        let row2 = format!("↓{:>2}{}↑{:>2}{}", d_num, d_unit, u_num, u_unit);
+        let left = SCALE * 2;
+        for (i, c) in row1.chars().enumerate() {
+            draw_char(&mut buf, left + i as u32 * 8 * SCALE, SCALE * 2, &get_glyph(c), 0, 0, 0);
+        }
+        for (i, c) in row2.chars().enumerate() {
+            draw_char(&mut buf, left + i as u32 * 8 * SCALE, SCALE * 12, &get_glyph(c), 0, 0, 0);
+        }
     }
-    for (i, c) in row2.chars().enumerate() {
-        draw_char(&mut buf, left + i as u32 * 8 * SCALE, row2_y, &get_glyph(c));
+
+    // Windows/Linux：32×32 正方形四行布局，白色字体（适配深色系统托盘背景）
+    // 每行 4 字符 × 8px = 32px，共 4 行 × 8px = 32px
+    #[cfg(not(target_os = "macos"))]
+    {
+        let lines: [String; 4] = [
+            format!("c{:>2}%", cpu.min(99)),
+            format!("m{:>2}%", mem.min(99)),
+            format!("↓{:>2}{}", d_num, d_unit),
+            format!("↑{:>2}{}", u_num, u_unit),
+        ];
+        for (row_i, line) in lines.iter().enumerate() {
+            let y = row_i as u32 * 8 * SCALE;
+            for (col_i, c) in line.chars().enumerate() {
+                draw_char(&mut buf, col_i as u32 * 8 * SCALE, y, &get_glyph(c), 255, 255, 255);
+            }
+        }
     }
+
     buf
 }
 
@@ -245,12 +277,22 @@ fn collect_metrics(state: &SysState) -> Metrics {
 
     let mem_percent = if mem_total > 0 { (mem_used * 100 / mem_total) as i32 } else { 0 };
 
-    // 网络：仅统计 en* 物理接口（以太网/Wi-Fi），与 Swift 版一致
+    // 网络：按平台过滤物理接口
+    // macOS：en*（以太网/Wi-Fi）
+    // Linux：en*/eth*（以太网）+ wl*（Wi-Fi）
+    // Windows：排除回环，统计所有真实接口
     let mut networks = state.networks.lock().unwrap();
     networks.refresh(false);
     let (rx, tx) = networks
         .iter()
-        .filter(|(name, _)| name.starts_with("en"))
+        .filter(|(name, _)| {
+            #[cfg(target_os = "macos")]
+            { name.starts_with("en") }
+            #[cfg(target_os = "linux")]
+            { name.starts_with("en") || name.starts_with("eth") || name.starts_with("wl") }
+            #[cfg(target_os = "windows")]
+            { !name.to_lowercase().contains("loopback") && !name.is_empty() }
+        })
         .fold((0u64, 0u64), |(a, b), (_, d)| (a + d.received(), b + d.transmitted()));
 
     let mut has_history = state.has_net_history.lock().unwrap();
