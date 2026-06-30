@@ -3147,6 +3147,7 @@ name = "tauri-glance"
 version = "0.1.0"
 dependencies = [
  "font8x8",
+ "serde",
  "sysinfo",
  "tauri",
  "tauri-build",

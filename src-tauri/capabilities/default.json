@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "identifier": "default",
-  "description": "隐藏渲染器窗口的权限",
-  "windows": ["main", "renderer"],
+  "description": "隐藏渲染器窗口 + Windows 悬浮指标小窗的权限",
+  "windows": ["main", "renderer", "widget"],
   "permissions": ["core:default"]
 }
