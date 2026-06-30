@@ -1,6 +1,4 @@
 use std::{sync::Mutex, time::Duration};
-#[cfg(target_os = "macos")]
-use font8x8::UnicodeFonts;
 
 use sysinfo::{Networks, System};
 use tauri::{
@@ -8,7 +6,7 @@ use tauri::{
     tray::TrayIconBuilder,
     AppHandle, Manager,
 };
-// 仅 macOS 在托盘菜单栏里画像素文字；Windows/Linux 走悬浮窗，不用托盘图像
+// 仅 macOS 在托盘菜单栏里画文字图标（Core Text 系统字体）；Windows/Linux 走悬浮窗
 #[cfg(target_os = "macos")]
 use tauri::image::Image;
 
@@ -17,73 +15,15 @@ use tauri::image::Image;
 // Windows/Linux 不在托盘画文字，改用悬浮 WebView 小窗，故无需这些常量。
 #[cfg(target_os = "macos")]
 const SCALE: u32 = 2;
-// 两行各 9 列（含组间空格）× 8px + 左右内边距，留到 78 以免末字符被裁
+// 9 列 × 12px(cell) + 左右内边距 ≈ 114px(@2x) → 57 逻辑像素，刚好包住文字
 #[cfg(target_os = "macos")]
-const ICON_W: u32 = 78;
+const ICON_W: u32 = 57;
 #[cfg(target_os = "macos")]
 const ICON_H: u32 = 20;
 #[cfg(target_os = "macos")]
 const PW: u32 = ICON_W * SCALE;
 #[cfg(target_os = "macos")]
 const PH: u32 = ICON_H * SCALE;
-
-// ── 自定义箭头 8×8 位图（仅 macOS 托盘像素渲染用）─────────────────────────────
-#[cfg(target_os = "macos")]
-#[rustfmt::skip]
-const GLYPH_DOWN: [u8; 8] = [
-    0b00011000,
-    0b00011000,
-    0b00011000,
-    0b11111110,
-    0b01111100,
-    0b00111000,
-    0b00010000,
-    0b00000000,
-];
-#[cfg(target_os = "macos")]
-#[rustfmt::skip]
-const GLYPH_UP: [u8; 8] = [
-    0b00010000,
-    0b00111000,
-    0b01111100,
-    0b11111110,
-    0b00011000,
-    0b00011000,
-    0b00011000,
-    0b00000000,
-];
-
-#[cfg(target_os = "macos")]
-fn get_glyph(c: char) -> [u8; 8] {
-    match c {
-        '↓' => GLYPH_DOWN,
-        '↑' => GLYPH_UP,
-        _ => font8x8::BASIC_FONTS.get(c).unwrap_or([0u8; 8]),
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn draw_char(buf: &mut [u8], x: u32, y: u32, glyph: &[u8; 8], r: u8, g: u8, b: u8) {
-    for (row, &bits) in glyph.iter().enumerate() {
-        for col in 0..8u32 {
-            if bits & (1 << col) != 0 {
-                for sy in 0..SCALE {
-                    for sx in 0..SCALE {
-                        let px = x + col * SCALE + sx;
-                        let py = y + row as u32 * SCALE + sy;
-                        if px < PW && py < PH {
-                            let i = ((py * PW + px) * 4) as usize;
-                            buf[i]     = r;
-                            buf[i + 1] = g;
-                            buf[i + 2] = b;
-                            buf[i + 3] = 255;
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
 
 // 与 SpeedFormatter.swift 一致
 fn format_speed(bps: f64) -> (String, &'static str) {
@@ -114,21 +54,71 @@ fn format_rows(cpu: i32, mem: i32, down_bps: f64, up_bps: f64) -> (String, Strin
     (row1, row2)
 }
 
-// 仅 macOS：把两行版式画进菜单栏宽条图标（黑字 + template 自动深/浅色反相）
+// 仅 macOS：用 Core Text 以系统字体把两行版式光栅化进菜单栏宽条图标。
+// 逐字符在等宽格子里居中绘制 —— 既用系统字体（抗锯齿），又保证数字每秒变化不抖动、
+// 与 Windows/Linux 的等宽两行版式一致。黑字 + template 由系统自动深/浅色反相。
 #[cfg(target_os = "macos")]
 fn render_icon(cpu: i32, mem: i32, down_bps: f64, up_bps: f64) -> Vec<u8> {
-    let mut buf = vec![0u8; (PW * PH * 4) as usize];
+    use core_foundation::attributed_string::CFMutableAttributedString;
+    use core_foundation::base::{TCFType, CFRange};
+    use core_foundation::string::CFString;
+    use core_graphics::base::kCGImageAlphaPremultipliedLast;
+    use core_graphics::color_space::CGColorSpace;
+    use core_graphics::context::CGContext;
+    use core_text::font as ct_font;
+    use core_text::line::CTLine;
+    use core_text::string_attributes::kCTFontAttributeName;
 
+    let w = PW as usize;
+    let h = PH as usize;
+    let cell = 12.0; // 每个字符的等宽格子（物理像素）；略大于最宽字形 m/%，紧凑不重叠
+    let left = 3.0;
+    let font_size = 15.0; // 物理像素；@2x 图标在菜单栏显示为 ~7.5pt 两行
     let (row1, row2) = format_rows(cpu, mem, down_bps, up_bps);
-    let left = SCALE * 2;
+
+    // CGBitmapContext 原点在左下角，故"视觉上排"用较大的 y、"下排"用较小的 y。
+    // 内存布局是顶行在前，绘制-底 映射到 内存-底，输出即为上而下，正对 tauri Image。
+    let cs = CGColorSpace::create_device_rgb();
+    let mut ctx = CGContext::create_bitmap_context(None, w, h, 8, w * 4, &cs, kCGImageAlphaPremultipliedLast);
+    ctx.set_should_antialias(true);
+    ctx.set_should_smooth_fonts(true);
+    ctx.set_rgb_fill_color(0.0, 0.0, 0.0, 1.0); // 黑字（template 反相）
+
+    // 系统字体（菜单栏默认字体）；解析失败则退回 Helvetica Neue
+    let font = ct_font::new_from_name(".AppleSystemUIFont", font_size)
+        .or_else(|_| ct_font::new_from_name("Helvetica Neue", font_size))
+        .expect("无法创建系统字体");
+
+    let draw_glyph = |c: char, cell_x: f64, baseline: f64| {
+        if c == ' ' {
+            return;
+        }
+        let mut astr = CFMutableAttributedString::new();
+        let s = CFString::new(&c.to_string());
+        astr.replace_str(&s, CFRange::init(0, 0));
+        let len = astr.char_len();
+        astr.set_attribute(
+            CFRange::init(0, len),
+            unsafe { kCTFontAttributeName },
+            &font,
+        );
+        let line = CTLine::new_with_attributed_string(astr.as_concrete_TypeRef());
+        let bounds = line.get_typographic_bounds();
+        let x = cell_x + (cell - bounds.width) / 2.0; // 在格子里水平居中
+        ctx.set_text_position(x, baseline);
+        line.draw(&ctx);
+    };
+
+    let top_baseline = 21.0; // 上排基线（原点在左下角，故上排用较大 y）
+    let bot_baseline = 3.0; // 下排基线（贴近底部）
     for (i, c) in row1.chars().enumerate() {
-        draw_char(&mut buf, left + i as u32 * 8 * SCALE, SCALE * 2, &get_glyph(c), 0, 0, 0);
+        draw_glyph(c, left + i as f64 * cell, top_baseline);
     }
     for (i, c) in row2.chars().enumerate() {
-        draw_char(&mut buf, left + i as u32 * 8 * SCALE, SCALE * 12, &get_glyph(c), 0, 0, 0);
+        draw_glyph(c, left + i as f64 * cell, bot_baseline);
     }
 
-    buf
+    ctx.data().to_vec()
 }
 
 // ── macOS 内存：直接调 host_statistics64，口径与活动监视器一致 ─────────────────
@@ -685,4 +675,27 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+// 把 macOS 图标渲染存成 PNG（黑字合成到白底以便肉眼查看），用于本机视觉验证。
+// 运行：cargo test --lib preview_icon -- --nocapture
+#[cfg(all(test, target_os = "macos"))]
+mod preview {
+    #[test]
+    fn preview_icon() {
+        let px = super::render_icon(8, 57, 27_000.0, 400_000.0); // c 8% m57% ↓27K ↑.4M
+        let (w, h) = (super::PW, super::PH);
+        let mut img = image::RgbaImage::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                let i = ((y * w + x) * 4) as usize;
+                let a = px[i + 3] as f32 / 255.0;
+                let v = (255.0 * (1.0 - a)) as u8; // 黑字合成到白底
+                img.put_pixel(x, y, image::Rgba([v, v, v, 255]));
+            }
+        }
+        let out = "/private/tmp/claude-501/-Users-julian-AIProjects-tauri-glance/07326ce3-6888-44e7-9b66-246e947b71ec/scratchpad/icon_preview.png";
+        img.save(out).unwrap();
+        println!("wrote {out}");
+    }
 }

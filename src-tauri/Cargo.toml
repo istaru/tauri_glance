@@ -18,7 +18,6 @@ tauri-plugin-autostart = "2"
 # 单实例守卫：第二次启动直接退出，避免点图标开出多个进程
 tauri-plugin-single-instance = "2"
 sysinfo = "0.33"
-font8x8 = { version = "0.3", default-features = false, features = ["unicode"] }
 # Windows 悬浮窗事件 payload 序列化（仅 Windows 用到，其它平台为未用依赖）
 serde = { version = "1", features = ["derive"] }
 
@@ -29,4 +28,14 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_Globalization",
 ] }
+
+# macOS：用 Core Text 以系统字体把菜单栏图标光栅化（替代 font8x8 点阵）
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+core-graphics = "0.24"
+core-text = "21"
+
+# macOS：渲染结果存 PNG 预览的测试用
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
 
