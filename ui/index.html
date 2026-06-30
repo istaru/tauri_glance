@@ -43,12 +43,43 @@
     <div class="row" id="row2">↓-- ↑ --</div>
   </div>
   <script>
-    // 监听 Rust 后台线程每秒推送的两行文本，直接整行替换以保留对齐空格
     const { listen } = window.__TAURI__.event;
+    const { invoke } = window.__TAURI__.core;
+
+    // 监听 Rust 后台线程每秒推送的两行文本，直接整行替换以保留对齐空格
     listen("metrics", (e) => {
       document.getElementById("row1").textContent = e.payload.row1;
       document.getElementById("row2").textContent = e.payload.row2;
     });
+
+    // 拖动定位：pointer 事件 → IPC 实时移动原生窗口；松开时存盘。
+    // screenX 是 CSS 像素，乘 devicePixelRatio 换算成物理像素（原生窗口用物理像素）。
+    const bar = document.getElementById("bar");
+    bar.style.cursor = "move";
+    let dragging = false;
+    let lastX = 0;
+    bar.addEventListener("pointerdown", (e) => {
+      dragging = true;
+      lastX = e.screenX;
+      try { bar.setPointerCapture(e.pointerId); } catch (_) {}
+      e.preventDefault();
+    });
+    bar.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      const cssDx = e.screenX - lastX;
+      if (cssDx !== 0) {
+        lastX = e.screenX;
+        invoke("move_widget", { dx: Math.round(cssDx * window.devicePixelRatio) });
+      }
+    });
+    const endDrag = (e) => {
+      if (!dragging) return;
+      dragging = false;
+      try { bar.releasePointerCapture(e.pointerId); } catch (_) {}
+      invoke("save_widget_pos");
+    };
+    bar.addEventListener("pointerup", endDrag);
+    bar.addEventListener("pointercancel", endDrag);
   </script>
 </body>
 </html>

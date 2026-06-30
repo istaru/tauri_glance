@@ -465,13 +465,18 @@ fn embed_into_taskbar(win: &tauri::WebviewWindow) {
             cls_tray.as_ptr(),
             std::ptr::null(),
         );
-        let x = if !tray.is_null() {
+        let default_x = if !tray.is_null() {
             let mut tr = RECT { left: 0, top: 0, right: 0, bottom: 0 };
             GetWindowRect(tray, &mut tr);
             (tr.left - tb.left) - w - 8
         } else {
             (tb.right - tb.left) - w - 200
         };
+        // 用户拖动过则用存档位置（限制在任务栏范围内），否则用默认的时钟左侧
+        let max_x = ((tb.right - tb.left) - w).max(0);
+        let x = load_widget_x(win.app_handle())
+            .map(|sx| sx.clamp(0, max_x))
+            .unwrap_or(default_x);
         let y = (tb_h - h) / 2;
 
         SetWindowPos(
@@ -486,6 +491,102 @@ fn embed_into_taskbar(win: &tauri::WebviewWindow) {
     }
 }
 
+// ── 悬浮窗位置：持久化 + 拖动 ────────────────────────────────────────────────────
+
+// 位置存档文件（应用配置目录下的 widget_x）
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+fn widget_pos_file(app: &AppHandle) -> Option<std::path::PathBuf> {
+    let dir = app.path().app_config_dir().ok()?;
+    let _ = std::fs::create_dir_all(&dir);
+    Some(dir.join("widget_x"))
+}
+
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+fn load_widget_x(app: &AppHandle) -> Option<i32> {
+    std::fs::read_to_string(widget_pos_file(app)?)
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+fn save_widget_x(app: &AppHandle, x: i32) {
+    if let Some(f) = widget_pos_file(app) {
+        let _ = std::fs::write(f, x.to_string());
+    }
+}
+
+// Windows：取 widget 几何信息 (hwnd, 相对父窗口 x, y, 宽, 高, 可用最大 x)
+#[cfg(target_os = "windows")]
+fn widget_geom_win(
+    win: &tauri::WebviewWindow,
+) -> Option<(*mut core::ffi::c_void, i32, i32, i32, i32)> {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowW, GetWindowRect};
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+    let hwnd = win.hwnd().ok()?.0 as *mut core::ffi::c_void;
+    unsafe {
+        let cls = wide("Shell_TrayWnd");
+        let taskbar = FindWindowW(cls.as_ptr(), std::ptr::null());
+        if taskbar.is_null() {
+            return None;
+        }
+        let mut wr = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        GetWindowRect(hwnd, &mut wr);
+        let mut tb = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        GetWindowRect(taskbar, &mut tb);
+        let w = wr.right - wr.left;
+        let cur_x = wr.left - tb.left; // 相对任务栏
+        let cur_y = wr.top - tb.top;
+        let max_x = ((tb.right - tb.left) - w).max(0);
+        Some((hwnd, cur_x, cur_y, max_x, w))
+    }
+}
+
+// 拖动中：把 widget 水平移动 dx 物理像素（前端 pointermove 实时调用）
+#[tauri::command]
+fn move_widget(app: AppHandle, dx: i32) {
+    let _ = (&app, dx);
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    if let Some(win) = app.get_webview_window("widget") {
+        #[cfg(target_os = "windows")]
+        {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                SetWindowPos, SWP_NOSIZE, SWP_NOZORDER,
+            };
+            if let Some((hwnd, cur_x, cur_y, max_x, _w)) = widget_geom_win(&win) {
+                let new_x = (cur_x + dx).clamp(0, max_x);
+                unsafe {
+                    SetWindowPos(hwnd, std::ptr::null_mut(), new_x, cur_y, 0, 0, SWP_NOZORDER | SWP_NOSIZE);
+                }
+            }
+        }
+        #[cfg(target_os = "linux")]
+        if let Ok(pos) = win.outer_position() {
+            let _ = win.set_position(tauri::PhysicalPosition::new(pos.x + dx, pos.y));
+        }
+    }
+}
+
+// 拖动结束：把当前位置存盘
+#[tauri::command]
+fn save_widget_pos(app: AppHandle) {
+    let _ = &app;
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    if let Some(win) = app.get_webview_window("widget") {
+        #[cfg(target_os = "windows")]
+        let cur = widget_geom_win(&win).map(|(_, x, _, _, _)| x);
+        #[cfg(target_os = "linux")]
+        let cur = win.outer_position().ok().map(|p| p.x);
+        if let Some(x) = cur {
+            save_widget_x(&app, x);
+        }
+    }
+}
+
 // ── 入口 ────────────────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -495,6 +596,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![]),
         ))
+        .invoke_handler(tauri::generate_handler![move_widget, save_widget_pos])
         .manage(SysState::new())
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -523,8 +625,9 @@ pub fn run() {
 
             builder.build(app)?;
 
-            // Windows/Linux：创建指标小窗（无边框 / 透明 / 跳过任务栏 / 点击穿透）。
+            // Windows/Linux：创建指标小窗（无边框 / 透明 / 跳过任务栏）。
             // 尺寸刚好容纳两行各 9 个等宽字符 —— 内容定宽，故固定尺寸即"自适应"。
+            // 不开点击穿透：widget 需接收鼠标以支持拖动定位。
             // macOS 不创建窗口，继续用菜单栏托盘图标。
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             {
@@ -545,10 +648,8 @@ pub fn run() {
                 .inner_size(82.0, 36.0)
                 .build()?;
 
-                // 鼠标点击穿透，不挡到下方内容
-                let _ = win.set_ignore_cursor_events(true);
-
-                // Windows：SetParent 进 Shell_TrayWnd，真正嵌入任务栏（时钟左侧）
+                // Windows：SetParent 进 Shell_TrayWnd，真正嵌入任务栏（默认时钟左侧，
+                // 若有拖动存档则用存档位置）
                 #[cfg(target_os = "windows")]
                 embed_into_taskbar(&win);
 
@@ -565,9 +666,13 @@ pub fn run() {
                             .unwrap_or(tauri::PhysicalSize { width: 82, height: 36 });
                         let margin = (8.0 * sf) as i32;
                         let panel = (40.0 * sf) as i32;
-                        let x = scr.width as i32 - wsz.width as i32 - margin;
+                        let max_x = (scr.width as i32 - wsz.width as i32).max(0);
+                        // 有拖动存档则用存档 x，否则默认贴右侧
+                        let x = load_widget_x(win.app_handle())
+                            .map(|sx| sx.clamp(0, max_x))
+                            .unwrap_or(max_x - margin);
                         let y = scr.height as i32 - wsz.height as i32 - panel;
-                        let _ = win.set_position(PhysicalPosition::new(x.max(0), y.max(0)));
+                        let _ = win.set_position(PhysicalPosition::new(x, y.max(0)));
                     }
                 }
             }

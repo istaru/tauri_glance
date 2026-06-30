@@ -224,9 +224,18 @@ macOS 上通过 `macos_mem::read()`（`host_statistics64` + `vm_kernel_page_size
 
 ### 9.5 菜单语言
 
-`is_chinese()` 读 `defaults read -g AppleLanguages`，首选语言以 `zh` 开头则显示中文，否则英文。
+`is_chinese()` 按平台检测系统语言（首选语言以 `zh` 开头即中文）：
+- **macOS**：`defaults read -g AppleLanguages`
+- **Windows**：`GetUserDefaultUILanguage()`，主语言号 `& 0x3ff == 0x04`（LANG_CHINESE）
+- **Linux**：`LC_ALL` / `LC_MESSAGES` / `LANG` locale 环境变量
 
-### 9.6 构建
+> 「开机启动」菜单项由 `tauri-plugin-autostart` 实现：Windows 写注册表 `HKCU\...\Run`，Linux 写 autostart desktop 文件，macOS 用 LaunchAgent。点击即真正切换自启动。
+
+### 9.6 悬浮窗拖动与位置持久化（Windows/Linux）
+
+widget **不开点击穿透**（需接收鼠标以拖动）。前端 `ui/index.html` 用 pointer 事件实现拖动：`pointermove` 调 `move_widget(dx)` 命令实时移动原生窗口（dx 为物理像素 = `cssDx × devicePixelRatio`），`pointerup` 调 `save_widget_pos` 把当前 x 存到配置目录的 `widget_x` 文件。启动时 `load_widget_x()` 读回：Windows 嵌入任务栏时用作相对任务栏的 x，Linux 用作屏幕 x；无存档则用默认位置（时钟左侧 / 屏幕右侧）。Windows 移动用 `SetWindowPos`（限制在任务栏宽度内），Linux 用 `set_position`。
+
+### 9.7 构建
 
 ```bash
 cd tauri-glance
@@ -235,18 +244,22 @@ npx tauri build
 #       src-tauri/target/release/bundle/dmg/看一眼_0.1.0_aarch64.dmg
 ```
 
-### 9.7 与 Swift 版的已知差异
+### 9.8 与 Swift 版的已知差异
 
 | 项目 | Swift 版 | Tauri 版 |
 |------|----------|----------|
 | 字体 | `monospacedDigitSystemFont(8, .bold)` | macOS 用 `font8x8` 位图字体；Windows/Linux 用悬浮窗 HTML/CSS |
-| 显示位置 | 菜单栏图标 | macOS 菜单栏托盘图标；Windows/Linux 屏幕右下角悬浮小窗 |
-| 图标位置持久化 | `autosaveName` | 不支持（Tauri 无此 API） |
+| 显示位置 | 菜单栏图标 | macOS 菜单栏托盘图标；Windows 嵌入任务栏（SetParent）；Linux 屏幕右下角悬浮窗 |
+| 图标位置持久化 | `autosaveName` | macOS 不支持；Windows/Linux 拖动后存 `widget_x` 文件 |
 | 平台 | macOS only | macOS / Windows / Linux |
 
 > 悬浮窗说明：macOS 菜单栏可放任意宽的条状自定义图像，Windows/Linux 通知区域只能放固定小方块图标，塞不下两行文字（Win11 也无公开 API 往任务栏画自定义文字，旧 Deskband 已移除）。故 Windows/Linux 用置顶悬浮 WebView 小窗复刻 macOS 的两行读数版式。
 
 ---
+
+## 协作约定
+
+- **推送后不要盯 CI 结果**：`git push` 之后不要用 `gh run watch` 或轮询 GitHub Actions 去等构建结果，用户会自己看。推送完直接交回控制权即可（可以告知 run 已触发、产物会发到 Releases，但不要等待/监视）。
 
 ## Agent skills
 
