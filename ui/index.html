@@ -4,7 +4,6 @@
   <meta charset="UTF-8" />
   <title>看一眼</title>
   <style>
-    /* 透明背景，悬浮在任务栏之上 */
     html, body {
       margin: 0;
       padding: 0;
@@ -14,8 +13,7 @@
       -webkit-user-select: none;
       cursor: default;
     }
-    /* 嵌入任务栏：背景全透明，直接显示在任务栏上，像是任务栏的一部分。
-       白字 + 描边阴影保证在深/浅色任务栏上都可读（无 macOS 的 template 反相机制）。 */
+    /* DEBUG-drag：临时给明显深色背景，验证"透明区域点击穿透"假设 + 提供清晰抓取区 */
     #bar {
       box-sizing: border-box;
       height: 100vh;
@@ -24,13 +22,12 @@
       justify-content: center;
       align-items: flex-start;
       padding: 1px 4px;
-      background: transparent;
+      background: rgba(40, 40, 40, 0.6);
       color: #fff;
       font: 700 12px/1.25 ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
       font-variant-numeric: tabular-nums;
       text-shadow: 0 0 2px rgba(0, 0, 0, 0.95), 0 1px 1px rgba(0, 0, 0, 0.8);
     }
-    /* white-space: pre 保留右对齐的占位空格，使两行逐列对齐（同 macOS 位图布局） */
     .row {
       white-space: pre;
       letter-spacing: 0.5px;
@@ -45,38 +42,68 @@
   <script>
     const { listen } = window.__TAURI__.event;
     const { invoke } = window.__TAURI__.core;
+    const row1 = document.getElementById("row1");
+    const row2 = document.getElementById("row2");
+    const bar = document.getElementById("bar");
 
-    // 监听 Rust 后台线程每秒推送的两行文本，直接整行替换以保留对齐空格
+    // ── DEBUG-drag：诊断仪表 ───────────────────────────────────────────────
+    // 交互期间把"发生了什么"直接写到两行文字里；diag 为真时暂停指标覆盖。
+    let diag = false;
+    let diagTimer = null;
+    function setDiag(a, b) {
+      diag = true;
+      row1.textContent = a;
+      row2.textContent = b;
+      if (diagTimer) clearTimeout(diagTimer);
+      diagTimer = setTimeout(() => { diag = false; }, 5000);
+    }
+
     listen("metrics", (e) => {
-      document.getElementById("row1").textContent = e.payload.row1;
-      document.getElementById("row2").textContent = e.payload.row2;
+      if (diag) return; // 诊断期间不被每秒指标覆盖
+      row1.textContent = e.payload.row1;
+      row2.textContent = e.payload.row2;
     });
 
-    // 拖动定位：pointer 事件 → IPC 实时移动原生窗口；松开时存盘。
-    // screenX 是 CSS 像素，乘 devicePixelRatio 换算成物理像素（原生窗口用物理像素）。
-    const bar = document.getElementById("bar");
+    // 任何鼠标交互的探针（区分 pointer / mouse / click 是否触达 webview）
+    bar.addEventListener("click", () => setDiag("CLICK ok", "tap"));
+    bar.addEventListener("mousedown", () => setDiag("MOUSE dn", "ok"));
+
+    // ── 拖动 ───────────────────────────────────────────────────────────────
     bar.style.cursor = "move";
     let dragging = false;
     let lastX = 0;
+    let moves = 0;
+
     bar.addEventListener("pointerdown", (e) => {
       dragging = true;
       lastX = e.screenX;
+      moves = 0;
+      bar.style.background = "rgba(200, 0, 0, 0.85)"; // 按下变红
+      setDiag("PTR dn", "ok");
       try { bar.setPointerCapture(e.pointerId); } catch (_) {}
       e.preventDefault();
     });
+
     bar.addEventListener("pointermove", (e) => {
       if (!dragging) return;
       const cssDx = e.screenX - lastX;
       if (cssDx !== 0) {
         lastX = e.screenX;
-        invoke("move_widget", { dx: Math.round(cssDx * window.devicePixelRatio) });
+        moves++;
+        const dx = Math.round(cssDx * (window.devicePixelRatio || 1));
+        setDiag("MV " + moves, "dx " + dx);
+        invoke("move_widget", { dx })
+          .catch((err) => setDiag("INV ERR", String(err).slice(0, 12)));
       }
     });
+
     const endDrag = (e) => {
       if (!dragging) return;
       dragging = false;
+      bar.style.background = "rgba(40, 40, 40, 0.6)";
       try { bar.releasePointerCapture(e.pointerId); } catch (_) {}
-      invoke("save_widget_pos");
+      invoke("save_widget_pos")
+        .catch((err) => setDiag("SAVE ERR", String(err).slice(0, 12)));
     };
     bar.addEventListener("pointerup", endDrag);
     bar.addEventListener("pointercancel", endDrag);
