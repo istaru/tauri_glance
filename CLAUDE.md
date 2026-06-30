@@ -202,6 +202,7 @@ open /Applications/看一眼.app
 ### 9.1 架构
 
 - **托盘应用**：`ActivationPolicy::Accessory`（macOS）
+- **单实例**：`tauri-plugin-single-instance` 最先注册，第二次启动直接退出，避免点图标开出多个进程（Windows/Linux 无 OS 级守卫，必须靠它；macOS 另有 LaunchServices 兜底）
 - **后台线程**：每秒采集指标 → 按平台分发渲染
 - **平台渲染分叉**（关键）：
   - **macOS**：`font8x8` 位图字体直接写像素缓冲区，渲染进**菜单栏托盘图标**（72×20 宽条，两行布局），不依赖 WebView/Canvas。

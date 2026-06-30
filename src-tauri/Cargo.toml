@@ -15,6 +15,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-autostart = "2"
+# 单实例守卫：第二次启动直接退出，避免点图标开出多个进程
+tauri-plugin-single-instance = "2"
 sysinfo = "0.33"
 font8x8 = { version = "0.3", default-features = false, features = ["unicode"] }
 # Windows 悬浮窗事件 payload 序列化（仅 Windows 用到，其它平台为未用依赖）

@@ -592,6 +592,9 @@ fn save_widget_pos(app: AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // 单实例守卫必须最先注册：第二次启动会触发此回调（在已运行的实例里）后自行退出。
+        // 本应用常驻托盘/任务栏，无主窗口可聚焦，回调留空即可——关键是第二个进程不再起来。
+        .plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {}))
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![]),
