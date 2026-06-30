@@ -3,11 +3,12 @@ use font8x8::UnicodeFonts;
 
 use sysinfo::{Networks, System};
 use tauri::{
-    image::Image,
     menu::{CheckMenuItem, Menu, PredefinedMenuItem},
     tray::TrayIconBuilder,
     AppHandle, Emitter, Manager,
 };
+#[cfg(not(target_os = "windows"))]
+use tauri::image::Image;
 
 // ── 图标尺寸（平台相关）────────────────────────────────────────────────────────
 // macOS：宽条形，适配菜单栏（SCALE=2 对应 Retina）
@@ -449,7 +450,7 @@ pub fn run() {
                     .flatten()
                     .map(|m| m.size().height as f64 / m.scale_factor())
                     .unwrap_or(1080.0); // 无法获取时退回 1080p
-                let _ = overlay.set_position(tauri::dpi::LogicalPosition::new(0.0_f64, screen_h - 40.0));
+                let _ = overlay.set_position(tauri::LogicalPosition::new(0.0_f64, screen_h - 40.0));
                 // build() 之后再次设置 always_on_top，确保 z-order 在任务栏之上
                 let _ = overlay.set_always_on_top(true);
                 let _ = overlay.show();
