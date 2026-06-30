@@ -20,3 +20,10 @@ font8x8 = { version = "0.3", default-features = false, features = ["unicode"] }
 # Windows 悬浮窗事件 payload 序列化（仅 Windows 用到，其它平台为未用依赖）
 serde = { version = "1", features = ["derive"] }
 
+# Windows：SetParent 把悬浮窗嵌入任务栏所需的裸 Win32 调用
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+] }
+

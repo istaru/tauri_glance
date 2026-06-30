@@ -17,8 +17,9 @@ use tauri::image::Image;
 // Windows/Linux 不在托盘画文字，改用悬浮 WebView 小窗，故无需这些常量。
 #[cfg(target_os = "macos")]
 const SCALE: u32 = 2;
+// 两行各 9 列（含组间空格）× 8px + 左右内边距，留到 78 以免末字符被裁
 #[cfg(target_os = "macos")]
-const ICON_W: u32 = 72;
+const ICON_W: u32 = 78;
 #[cfg(target_os = "macos")]
 const ICON_H: u32 = 20;
 #[cfg(target_os = "macos")]
@@ -101,15 +102,15 @@ fn format_speed(bps: f64) -> (String, &'static str) {
     else                   { (format!("{}", ((bps/gb) as u32).min(99)),     "G") }
 }
 
-// macOS 菜单栏图标 与 Windows 悬浮窗 共用的两行版式（单一来源，保证逐字符一致）：
-//   row1 = "c97%m77%"
-//   row2 = "↓66B↑ 0B"   （数字右对齐宽度 2，不足补空格）
+// macOS 菜单栏图标 与 Windows/Linux 悬浮窗 共用的两行版式（单一来源，逐字符一致）：
+//   row1 = "c97% m77%"   （CPU 组与内存组之间留一个空格）
+//   row2 = "↓66B ↑ 0B"   （下载组与上传组之间留一个空格；数字右对齐宽度 2）
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn format_rows(cpu: i32, mem: i32, down_bps: f64, up_bps: f64) -> (String, String) {
     let (d_num, d_unit) = format_speed(down_bps);
     let (u_num, u_unit) = format_speed(up_bps);
-    let row1 = format!("c{:>2}%m{:>2}%", cpu.min(99), mem.min(99));
-    let row2 = format!("↓{:>2}{}↑{:>2}{}", d_num, d_unit, u_num, u_unit);
+    let row1 = format!("c{:>2}% m{:>2}%", cpu.min(99), mem.min(99));
+    let row2 = format!("↓{:>2}{} ↑{:>2}{}", d_num, d_unit, u_num, u_unit);
     (row1, row2)
 }
 
@@ -386,6 +387,82 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     Menu::with_items(app, &[&autostart, &sep, &quit])
 }
 
+// ── Windows：把悬浮窗 SetParent 进任务栏，作为 Shell_TrayWnd 的子窗口 ──────────
+// 注意：这是非官方手法，跨 Windows 版本/更新可能失效（Win11 无受支持的任务栏嵌入 API）。
+#[cfg(target_os = "windows")]
+fn embed_into_taskbar(win: &tauri::WebviewWindow) {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        FindWindowExW, FindWindowW, GetWindowLongPtrW, GetWindowRect, SetParent,
+        SetWindowLongPtrW, SetWindowPos, GWL_STYLE, SWP_NOZORDER, SWP_SHOWWINDOW, WS_CHILD,
+        WS_POPUP, WS_VISIBLE,
+    };
+
+    // 生成 null 结尾的宽字符串
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    // 取自身 HWND（tauri 的 windows::HWND，其 .0 是 *mut c_void，可直接当 windows-sys HWND）
+    let hwnd = match win.hwnd() {
+        Ok(h) => h.0 as _,
+        Err(_) => return,
+    };
+
+    unsafe {
+        let cls_taskbar = wide("Shell_TrayWnd");
+        let taskbar = FindWindowW(cls_taskbar.as_ptr(), std::ptr::null());
+        if taskbar.is_null() {
+            return;
+        }
+
+        // 1) 去掉 WS_POPUP、加 WS_CHILD，使其成为可被 SetParent 收纳的子窗口
+        let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+        let new_style =
+            (style & !(WS_POPUP as isize)) | (WS_CHILD as isize) | (WS_VISIBLE as isize);
+        SetWindowLongPtrW(hwnd, GWL_STYLE, new_style);
+
+        // 2) 认任务栏为父窗口
+        SetParent(hwnd, taskbar);
+
+        // 3) 量任务栏尺寸 + 自身物理尺寸
+        let mut tb = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        GetWindowRect(taskbar, &mut tb);
+        let tb_h = tb.bottom - tb.top;
+        let (w, h) = match win.outer_size() {
+            Ok(s) => (s.width as i32, s.height as i32),
+            Err(_) => (120, 48),
+        };
+
+        // 4) 定位到时钟区域(TrayNotifyWnd)左侧、垂直居中于任务栏（坐标相对任务栏客户区）
+        let cls_tray = wide("TrayNotifyWnd");
+        let tray = FindWindowExW(
+            taskbar,
+            std::ptr::null_mut(),
+            cls_tray.as_ptr(),
+            std::ptr::null(),
+        );
+        let x = if !tray.is_null() {
+            let mut tr = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+            GetWindowRect(tray, &mut tr);
+            (tr.left - tb.left) - w - 8
+        } else {
+            (tb.right - tb.left) - w - 200
+        };
+        let y = (tb_h - h) / 2;
+
+        SetWindowPos(
+            hwnd,
+            std::ptr::null_mut(),
+            x.max(0),
+            y.max(0),
+            w,
+            h,
+            SWP_NOZORDER | SWP_SHOWWINDOW,
+        );
+    }
+}
+
 // ── 入口 ────────────────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -423,11 +500,12 @@ pub fn run() {
 
             builder.build(app)?;
 
-            // Windows/Linux：创建右下角悬浮指标小窗（无边框 / 透明 / 置顶 /
-            // 跳过任务栏 / 点击穿透）。macOS 不创建窗口，继续用菜单栏托盘图标。
+            // Windows/Linux：创建指标小窗（无边框 / 透明 / 跳过任务栏 / 点击穿透）。
+            // 尺寸刚好容纳两行各 9 个等宽字符 —— 内容定宽，故固定尺寸即"自适应"。
+            // macOS 不创建窗口，继续用菜单栏托盘图标。
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             {
-                use tauri::{PhysicalPosition, WebviewUrl, WebviewWindowBuilder};
+                use tauri::{WebviewUrl, WebviewWindowBuilder};
                 let win = WebviewWindowBuilder::new(
                     app,
                     "widget",
@@ -441,24 +519,33 @@ pub fn run() {
                 .resizable(false)
                 .shadow(false)
                 .focused(false)
-                .inner_size(110.0, 42.0)
+                .inner_size(82.0, 36.0)
                 .build()?;
 
                 // 鼠标点击穿透，不挡到下方内容
                 let _ = win.set_ignore_cursor_events(true);
 
-                // 定位到主屏右下角、任务栏上方（按 DPI 缩放留边距）
-                if let Ok(Some(mon)) = win.primary_monitor() {
-                    let scr = mon.size(); // 物理像素
-                    let sf = mon.scale_factor();
-                    let wsz = win
-                        .outer_size()
-                        .unwrap_or(tauri::PhysicalSize { width: 110, height: 42 });
-                    let margin = (8.0 * sf) as i32;
-                    let taskbar = (48.0 * sf) as i32; // 任务栏高度的经验值
-                    let x = scr.width as i32 - wsz.width as i32 - margin;
-                    let y = scr.height as i32 - wsz.height as i32 - taskbar;
-                    let _ = win.set_position(PhysicalPosition::new(x.max(0), y.max(0)));
+                // Windows：SetParent 进 Shell_TrayWnd，真正嵌入任务栏（时钟左侧）
+                #[cfg(target_os = "windows")]
+                embed_into_taskbar(&win);
+
+                // Linux：SetParent 是 Win32 专属，任务栏嵌入需按桌面环境另案处理。
+                // 暂用悬浮窗贴屏幕右下角（面板位置因 DE 而异，留待真机微调）。
+                #[cfg(target_os = "linux")]
+                {
+                    use tauri::PhysicalPosition;
+                    if let Ok(Some(mon)) = win.primary_monitor() {
+                        let scr = mon.size();
+                        let sf = mon.scale_factor();
+                        let wsz = win
+                            .outer_size()
+                            .unwrap_or(tauri::PhysicalSize { width: 82, height: 36 });
+                        let margin = (8.0 * sf) as i32;
+                        let panel = (40.0 * sf) as i32;
+                        let x = scr.width as i32 - wsz.width as i32 - margin;
+                        let y = scr.height as i32 - wsz.height as i32 - panel;
+                        let _ = win.set_position(PhysicalPosition::new(x.max(0), y.max(0)));
+                    }
                 }
             }
 

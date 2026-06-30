@@ -14,20 +14,21 @@
       -webkit-user-select: none;
       cursor: default;
     }
-    /* 与 macOS 菜单栏同款：两行等宽文本，白字。
-       深色半透明胶囊保证在浅色任务栏上也可读（macOS 靠 template 反相，Windows 无此机制）。 */
+    /* 嵌入任务栏：背景全透明，直接显示在任务栏上，像是任务栏的一部分。
+       白字 + 描边阴影保证在深/浅色任务栏上都可读（无 macOS 的 template 反相机制）。 */
     #bar {
       box-sizing: border-box;
       height: 100vh;
       display: flex;
       flex-direction: column;
       justify-content: center;
-      padding: 2px 7px;
-      background: rgba(20, 20, 20, 0.72);
-      border-radius: 7px;
+      align-items: flex-start;
+      padding: 1px 4px;
+      background: transparent;
       color: #fff;
-      font: 700 13px/1.18 ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
+      font: 700 12px/1.25 ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
       font-variant-numeric: tabular-nums;
+      text-shadow: 0 0 2px rgba(0, 0, 0, 0.95), 0 1px 1px rgba(0, 0, 0, 0.8);
     }
     /* white-space: pre 保留右对齐的占位空格，使两行逐列对齐（同 macOS 位图布局） */
     .row {
@@ -38,8 +39,8 @@
 </head>
 <body>
   <div id="bar">
-    <div class="row" id="row1">c--%m--%</div>
-    <div class="row" id="row2">↓--↑ --</div>
+    <div class="row" id="row1">c--% m--%</div>
+    <div class="row" id="row2">↓-- ↑ --</div>
   </div>
   <script>
     // 监听 Rust 后台线程每秒推送的两行文本，直接整行替换以保留对齐空格
