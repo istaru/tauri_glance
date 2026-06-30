@@ -348,24 +348,47 @@ fn start_monitor(app: AppHandle) {
 // ── 语言检测 ───────────────────────────────────────────────────────────────────
 
 fn is_chinese() -> bool {
-    // 读 macOS 系统首选语言（与 Swift 版 Locale.preferredLanguages 等价）
-    if let Ok(out) = std::process::Command::new("defaults")
-        .args(["read", "-g", "AppleLanguages"])
-        .output()
+    // macOS：读系统首选语言（与 Swift 版 Locale.preferredLanguages 等价）
+    #[cfg(target_os = "macos")]
     {
-        if let Ok(text) = String::from_utf8(out.stdout) {
-            // 输出示例：(\n    "zh-Hans-CN",\n    en,\n)\n
-            for line in text.lines() {
-                let t = line.trim().trim_matches(|c: char| c == '"' || c == ',');
-                if t.is_empty() || t == "(" || t == ")" {
-                    continue;
+        if let Ok(out) = std::process::Command::new("defaults")
+            .args(["read", "-g", "AppleLanguages"])
+            .output()
+        {
+            if let Ok(text) = String::from_utf8(out.stdout) {
+                // 输出示例：(\n    "zh-Hans-CN",\n    en,\n)\n
+                for line in text.lines() {
+                    let t = line.trim().trim_matches(|c: char| c == '"' || c == ',');
+                    if t.is_empty() || t == "(" || t == ")" {
+                        continue;
+                    }
+                    return t.starts_with("zh");
                 }
-                return t.starts_with("zh");
             }
         }
+        false
     }
-    // 降级：读 LANG 环境变量
-    std::env::var("LANG").map(|l| l.starts_with("zh")).unwrap_or(false)
+
+    // Windows：取用户界面语言 LANGID，主语言号 == LANG_CHINESE(0x04) 即中文
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::Globalization::GetUserDefaultUILanguage;
+        let langid = unsafe { GetUserDefaultUILanguage() };
+        (langid & 0x3ff) == 0x04
+    }
+
+    // Linux：读 locale 环境变量（zh_CN.UTF-8 等）
+    #[cfg(target_os = "linux")]
+    {
+        for key in ["LC_ALL", "LC_MESSAGES", "LANG"] {
+            if let Ok(v) = std::env::var(key) {
+                if !v.is_empty() {
+                    return v.to_lowercase().starts_with("zh");
+                }
+            }
+        }
+        false
+    }
 }
 
 // ── 菜单 ────────────────────────────────────────────────────────────────────────
