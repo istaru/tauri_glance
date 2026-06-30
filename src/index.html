@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: transparent;
+      overflow: hidden;
+    }
+    #app {
+      width: 100%;
+      height: 100%;
+      background: rgba(18, 18, 18, 0.88);
+      color: #e0e0e0;
+      font-family: Consolas, 'Courier New', monospace;
+      font-size: 11px;
+      line-height: 1.5;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 0 8px;
+      -webkit-app-region: drag;
+      cursor: default;
+      white-space: nowrap;
+      border-right: 1px solid rgba(255, 255, 255, 0.08);
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="line1">CPU:  --%  ↑: --</div>
+    <div id="line2">内存: --%  ↓: --</div>
+  </div>
+  <script>
+    const { listen } = window.__TAURI__.event;
+    listen('metrics-update', ({ payload }) => {
+      const idx = payload.indexOf('\n');
+      document.getElementById('line1').textContent = payload.slice(0, idx);
+      document.getElementById('line2').textContent = payload.slice(idx + 1);
+    });
+  </script>
+</body>
+</html>

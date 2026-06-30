@@ -2,6 +2,6 @@
   "$schema": "https://schema.tauri.app/config/2",
   "identifier": "default",
   "description": "隐藏渲染器窗口的权限",
-  "windows": ["main", "renderer"],
+  "windows": ["main", "renderer", "overlay"],
   "permissions": ["core:default"]
 }

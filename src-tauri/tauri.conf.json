@@ -3,6 +3,9 @@
   "productName": "看一眼",
   "version": "0.1.0",
   "identifier": "com.swiftglance.menubar",
+  "build": {
+    "frontendDist": "../src"
+  },
 "app": {
     "withGlobalTauri": true,
     "windows": [],
