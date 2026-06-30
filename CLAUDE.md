@@ -204,8 +204,9 @@ open /Applications/看一眼.app
 - **托盘应用**：`ActivationPolicy::Accessory`（macOS）
 - **后台线程**：每秒采集指标 → 按平台分发渲染
 - **平台渲染分叉**（关键）：
-  - **macOS / Linux**：`font8x8` 位图字体直接写像素缓冲区，渲染进**托盘图标**，不依赖 WebView/Canvas；macOS 走宽条形菜单栏布局，Linux 走 32×32 四行布局。
-  - **Windows**：系统托盘只能放固定小正方形图标，塞不下多行文字。故 Windows **不在托盘画文字**，改为在右下角任务栏上方创建一个**悬浮 WebView 小窗**（`widget`，无边框/透明/置顶/跳过任务栏/点击穿透），后台线程每秒 `emit("metrics")` 推 `MetricsPayload`（两行文本 `row1`/`row2`，由 macOS/Windows 共用的 `format_rows()` 生成，保证版式逐字符一致），由 `ui/index.html` 按 macOS 同款**两行布局**（`c97%m77%` / `↓66B↑ 0B`，等宽 + `white-space:pre` 保留对齐空格）渲染；托盘只保留静态图标承载菜单。前端资源 `frontendDist: "../ui"`，权限见 `capabilities/default.json`（`widget` 窗口）。
+  - **macOS**：`font8x8` 位图字体直接写像素缓冲区，渲染进**菜单栏托盘图标**（72×20 宽条，两行布局），不依赖 WebView/Canvas。
+  - **Windows / Linux**：系统托盘只能放固定小正方形图标，塞不下两行各 8 字符的文字。故二者**都不在托盘画文字**，改为在屏幕右下角创建一个**悬浮 WebView 小窗**（`widget`，无边框/透明/置顶/跳过任务栏/点击穿透），后台线程每秒 `emit("metrics")` 推 `MetricsPayload`（两行文本 `row1`/`row2`，由三平台共用的 `format_rows()` 生成，保证版式逐字符一致），由 `ui/index.html` 按 macOS 同款**两行布局**（`c97%m77%` / `↓66B↑ 0B`，等宽 + `white-space:pre` 保留对齐空格）渲染；托盘只保留静态图标承载菜单。前端资源 `frontendDist: "../ui"`，权限见 `capabilities/default.json`（`widget` 窗口）。
+  - Linux 注意：各桌面环境（GNOME 顶栏 / KDE/XFCE 底栏）面板位置与透明合成支持不一，悬浮窗的定位（默认右下角、减 48px 面板高）与透明/穿透行为可能需按 DE 调整。
 
 ### 9.2 深/浅色适配要点
 
@@ -238,12 +239,12 @@ npx tauri build
 
 | 项目 | Swift 版 | Tauri 版 |
 |------|----------|----------|
-| 字体 | `monospacedDigitSystemFont(8, .bold)` | macOS/Linux 用 `font8x8` 位图字体；Windows 用悬浮窗 HTML/CSS |
-| 显示位置 | 菜单栏图标 | macOS/Linux 托盘图标；Windows 任务栏右下角悬浮小窗 |
+| 字体 | `monospacedDigitSystemFont(8, .bold)` | macOS 用 `font8x8` 位图字体；Windows/Linux 用悬浮窗 HTML/CSS |
+| 显示位置 | 菜单栏图标 | macOS 菜单栏托盘图标；Windows/Linux 屏幕右下角悬浮小窗 |
 | 图标位置持久化 | `autosaveName` | 不支持（Tauri 无此 API） |
 | 平台 | macOS only | macOS / Windows / Linux |
 
-> Windows 悬浮窗说明：macOS 菜单栏可放任意宽的条状自定义图像，Windows 通知区域只能放固定小方块图标，Win11 也无公开 API 让普通 App 往任务栏画自定义文字（旧 Deskband 已移除）。故 Windows 用置顶悬浮 WebView 小窗模拟「任务栏上的一条实时读数」。
+> 悬浮窗说明：macOS 菜单栏可放任意宽的条状自定义图像，Windows/Linux 通知区域只能放固定小方块图标，塞不下两行文字（Win11 也无公开 API 往任务栏画自定义文字，旧 Deskband 已移除）。故 Windows/Linux 用置顶悬浮 WebView 小窗复刻 macOS 的两行读数版式。
 
 ---
 

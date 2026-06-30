@@ -1,5 +1,5 @@
 use std::{sync::Mutex, time::Duration};
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 use font8x8::UnicodeFonts;
 
 use sysinfo::{Networks, System};
@@ -8,35 +8,26 @@ use tauri::{
     tray::TrayIconBuilder,
     AppHandle, Manager,
 };
-// macOS/Linux：托盘像素图标需要 Image；Windows 走悬浮窗，不用托盘图像
-#[cfg(not(target_os = "windows"))]
+// 仅 macOS 在托盘菜单栏里画像素文字；Windows/Linux 走悬浮窗，不用托盘图像
+#[cfg(target_os = "macos")]
 use tauri::image::Image;
 
-// ── 图标尺寸（平台相关）────────────────────────────────────────────────────────
-// macOS：宽条形，适配菜单栏（SCALE=2 对应 Retina）
+// ── 图标尺寸（仅 macOS 托盘菜单栏用）──────────────────────────────────────────
+// macOS：宽条形，适配菜单栏（SCALE=2 对应 Retina）。
+// Windows/Linux 不在托盘画文字，改用悬浮 WebView 小窗，故无需这些常量。
 #[cfg(target_os = "macos")]
 const SCALE: u32 = 2;
 #[cfg(target_os = "macos")]
 const ICON_W: u32 = 72;
 #[cfg(target_os = "macos")]
 const ICON_H: u32 = 20;
-
-// Linux：32×32 正方形，适配系统托盘图标槽
-#[cfg(target_os = "linux")]
-const SCALE: u32 = 1;
-#[cfg(target_os = "linux")]
-const ICON_W: u32 = 32;
-#[cfg(target_os = "linux")]
-const ICON_H: u32 = 32;
-
-// Windows 不在托盘里画文字（改用悬浮窗），故托盘像素尺寸仅 macOS/Linux 需要
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 const PW: u32 = ICON_W * SCALE;
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 const PH: u32 = ICON_H * SCALE;
 
-// ── 自定义箭头 8×8 位图（仅 macOS/Linux 托盘像素渲染用）────────────────────────
-#[cfg(not(target_os = "windows"))]
+// ── 自定义箭头 8×8 位图（仅 macOS 托盘像素渲染用）─────────────────────────────
+#[cfg(target_os = "macos")]
 #[rustfmt::skip]
 const GLYPH_DOWN: [u8; 8] = [
     0b00011000,
@@ -48,7 +39,7 @@ const GLYPH_DOWN: [u8; 8] = [
     0b00010000,
     0b00000000,
 ];
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 #[rustfmt::skip]
 const GLYPH_UP: [u8; 8] = [
     0b00010000,
@@ -61,7 +52,7 @@ const GLYPH_UP: [u8; 8] = [
     0b00000000,
 ];
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 fn get_glyph(c: char) -> [u8; 8] {
     match c {
         '↓' => GLYPH_DOWN,
@@ -70,7 +61,7 @@ fn get_glyph(c: char) -> [u8; 8] {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 fn draw_char(buf: &mut [u8], x: u32, y: u32, glyph: &[u8; 8], r: u8, g: u8, b: u8) {
     for (row, &bits) in glyph.iter().enumerate() {
         for col in 0..8u32 {
@@ -113,7 +104,7 @@ fn format_speed(bps: f64) -> (String, &'static str) {
 // macOS 菜单栏图标 与 Windows 悬浮窗 共用的两行版式（单一来源，保证逐字符一致）：
 //   row1 = "c97%m77%"
 //   row2 = "↓66B↑ 0B"   （数字右对齐宽度 2，不足补空格）
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn format_rows(cpu: i32, mem: i32, down_bps: f64, up_bps: f64) -> (String, String) {
     let (d_num, d_unit) = format_speed(down_bps);
     let (u_num, u_unit) = format_speed(up_bps);
@@ -122,41 +113,18 @@ fn format_rows(cpu: i32, mem: i32, down_bps: f64, up_bps: f64) -> (String, Strin
     (row1, row2)
 }
 
-#[cfg(not(target_os = "windows"))]
+// 仅 macOS：把两行版式画进菜单栏宽条图标（黑字 + template 自动深/浅色反相）
+#[cfg(target_os = "macos")]
 fn render_icon(cpu: i32, mem: i32, down_bps: f64, up_bps: f64) -> Vec<u8> {
     let mut buf = vec![0u8; (PW * PH * 4) as usize];
 
-    // macOS：宽条形两行布局，黑色字体（配合 template 模式自动深/浅色适配）
-    #[cfg(target_os = "macos")]
-    {
-        let (row1, row2) = format_rows(cpu, mem, down_bps, up_bps);
-        let left = SCALE * 2;
-        for (i, c) in row1.chars().enumerate() {
-            draw_char(&mut buf, left + i as u32 * 8 * SCALE, SCALE * 2, &get_glyph(c), 0, 0, 0);
-        }
-        for (i, c) in row2.chars().enumerate() {
-            draw_char(&mut buf, left + i as u32 * 8 * SCALE, SCALE * 12, &get_glyph(c), 0, 0, 0);
-        }
+    let (row1, row2) = format_rows(cpu, mem, down_bps, up_bps);
+    let left = SCALE * 2;
+    for (i, c) in row1.chars().enumerate() {
+        draw_char(&mut buf, left + i as u32 * 8 * SCALE, SCALE * 2, &get_glyph(c), 0, 0, 0);
     }
-
-    // Linux：32×32 正方形四行布局，白色字体（适配深色系统托盘背景）
-    // 每行 4 字符 × 8px = 32px，共 4 行 × 8px = 32px
-    #[cfg(target_os = "linux")]
-    {
-        let (d_num, d_unit) = format_speed(down_bps);
-        let (u_num, u_unit) = format_speed(up_bps);
-        let lines: [String; 4] = [
-            format!("c{:>2}%", cpu.min(99)),
-            format!("m{:>2}%", mem.min(99)),
-            format!("↓{:>2}{}", d_num, d_unit),
-            format!("↑{:>2}{}", u_num, u_unit),
-        ];
-        for (row_i, line) in lines.iter().enumerate() {
-            let y = row_i as u32 * 8 * SCALE;
-            for (col_i, c) in line.chars().enumerate() {
-                draw_char(&mut buf, col_i as u32 * 8 * SCALE, y, &get_glyph(c), 255, 255, 255);
-            }
-        }
+    for (i, c) in row2.chars().enumerate() {
+        draw_char(&mut buf, left + i as u32 * 8 * SCALE, SCALE * 12, &get_glyph(c), 0, 0, 0);
     }
 
     buf
@@ -278,8 +246,8 @@ struct Metrics {
     upload_bps: f64,
 }
 
-// Windows 悬浮窗：每秒 emit("metrics") 推两行文本，前端按 macOS 同款两行版式渲染
-#[cfg(target_os = "windows")]
+// Windows/Linux 悬浮窗：每秒 emit("metrics") 推两行文本，前端按 macOS 同款版式渲染
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 #[derive(Clone, serde::Serialize)]
 struct MetricsPayload {
     row1: String, // 例 "c97%m77%"
@@ -343,8 +311,8 @@ fn start_monitor(app: AppHandle) {
             let state = app.state::<SysState>();
             let m = collect_metrics(&state);
 
-            // Windows：把指标推给悬浮 WebView 小窗（托盘图标保持静态，仅承载菜单）
-            #[cfg(target_os = "windows")]
+            // Windows/Linux：把指标推给悬浮 WebView 小窗（托盘图标保持静态，仅承载菜单）
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
             {
                 use tauri::Emitter;
                 let (row1, row2) = format_rows(
@@ -356,8 +324,8 @@ fn start_monitor(app: AppHandle) {
                 let _ = app.emit("metrics", MetricsPayload { row1, row2 });
             }
 
-            // macOS/Linux：把指标渲染进托盘像素图标
-            #[cfg(not(target_os = "windows"))]
+            // macOS：把指标渲染进托盘菜单栏像素图标
+            #[cfg(target_os = "macos")]
             {
                 let pixels = render_icon(m.cpu_percent, m.mem_percent, m.download_bps, m.upload_bps);
                 let img = Image::new_owned(pixels, PW, PH);
@@ -455,9 +423,9 @@ pub fn run() {
 
             builder.build(app)?;
 
-            // Windows：创建任务栏右下角的悬浮指标小窗（无边框 / 透明 / 置顶 /
-            // 跳过任务栏 / 点击穿透）。macOS/Linux 不创建窗口，行为不变。
-            #[cfg(target_os = "windows")]
+            // Windows/Linux：创建右下角悬浮指标小窗（无边框 / 透明 / 置顶 /
+            // 跳过任务栏 / 点击穿透）。macOS 不创建窗口，继续用菜单栏托盘图标。
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
             {
                 use tauri::{PhysicalPosition, WebviewUrl, WebviewWindowBuilder};
                 let win = WebviewWindowBuilder::new(
