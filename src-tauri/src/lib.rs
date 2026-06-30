@@ -15,9 +15,9 @@ use tauri::image::Image;
 // Windows/Linux 不在托盘画文字，改用悬浮 WebView 小窗，故无需这些常量。
 #[cfg(target_os = "macos")]
 const SCALE: u32 = 2;
-// 9 列 × 12px(cell) + 左右内边距 ≈ 114px(@2x) → 57 逻辑像素，刚好包住文字
+// 9 列 × 14px(cell) + 左右内边距 ≈ 132px(@2x) → 66 逻辑像素，刚好包住文字
 #[cfg(target_os = "macos")]
-const ICON_W: u32 = 57;
+const ICON_W: u32 = 66;
 #[cfg(target_os = "macos")]
 const ICON_H: u32 = 20;
 #[cfg(target_os = "macos")]
@@ -71,9 +71,9 @@ fn render_icon(cpu: i32, mem: i32, down_bps: f64, up_bps: f64) -> Vec<u8> {
 
     let w = PW as usize;
     let h = PH as usize;
-    let cell = 12.0; // 每个字符的等宽格子（物理像素）；略大于最宽字形 m/%，紧凑不重叠
+    let cell = 14.0; // 每个字符的等宽格子（物理像素）；加粗后字形更宽，格子相应加大
     let left = 3.0;
-    let font_size = 15.0; // 物理像素；@2x 图标在菜单栏显示为 ~7.5pt 两行
+    let font_size = 18.0; // 物理像素；@2x 图标在菜单栏显示为 ~9pt 两行（更大更醒目）
     let (row1, row2) = format_rows(cpu, mem, down_bps, up_bps);
 
     // CGBitmapContext 原点在左下角，故"视觉上排"用较大的 y、"下排"用较小的 y。
@@ -84,10 +84,12 @@ fn render_icon(cpu: i32, mem: i32, down_bps: f64, up_bps: f64) -> Vec<u8> {
     ctx.set_should_smooth_fonts(true);
     ctx.set_rgb_fill_color(0.0, 0.0, 0.0, 1.0); // 黑字（template 反相）
 
-    // 系统字体（菜单栏默认字体）；解析失败则退回 Helvetica Neue
-    let font = ct_font::new_from_name(".AppleSystemUIFont", font_size)
-        .or_else(|_| ct_font::new_from_name("Helvetica Neue", font_size))
-        .expect("无法创建系统字体");
+    // 加粗系统字体（emphasized system font = 菜单栏系统字体的 bold 变体）
+    let font = ct_font::new_ui_font_for_language(
+        ct_font::kCTFontEmphasizedSystemFontType,
+        font_size,
+        None,
+    );
 
     let draw_glyph = |c: char, cell_x: f64, baseline: f64| {
         if c == ' ' {
@@ -109,7 +111,7 @@ fn render_icon(cpu: i32, mem: i32, down_bps: f64, up_bps: f64) -> Vec<u8> {
         line.draw(&ctx);
     };
 
-    let top_baseline = 21.0; // 上排基线（原点在左下角，故上排用较大 y）
+    let top_baseline = 22.0; // 上排基线（原点在左下角，故上排用较大 y）
     let bot_baseline = 3.0; // 下排基线（贴近底部）
     for (i, c) in row1.chars().enumerate() {
         draw_glyph(c, left + i as f64 * cell, top_baseline);
