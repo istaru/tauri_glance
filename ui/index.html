@@ -7,22 +7,32 @@
     html, body {
       margin: 0;
       padding: 0;
+      height: 100%;
       background: transparent;
       overflow: hidden;
       user-select: none;
       -webkit-user-select: none;
       cursor: default;
     }
-    /* DEBUG-drag：临时给明显深色背景，验证"透明区域点击穿透"假设 + 提供清晰抓取区 */
+    /* 外层：透明、铺满整窗，作为拖动抓取区（整窗任意处都能抓）。
+       靠右排布 → 内层药丸紧贴右侧的 ^ 箭头。 */
     #bar {
       box-sizing: border-box;
       height: 100vh;
       display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      cursor: move;
+    }
+    /* 内层：可见的淡底药丸，宽度自适应内容（fit-content），不再铺满整窗。 */
+    #pill {
+      display: flex;
       flex-direction: column;
-      justify-content: center;
       align-items: flex-start;
+      width: fit-content;
       padding: 1px 4px;
-      background: rgba(40, 40, 40, 0.6);
+      border-radius: 4px;
+      background: rgba(0, 0, 0, 0.10);
       color: #fff;
       font: 700 12px/1.25 ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
       font-variant-numeric: tabular-nums;
@@ -36,8 +46,10 @@
 </head>
 <body>
   <div id="bar">
-    <div class="row" id="row1">c--% m--%</div>
-    <div class="row" id="row2">↓-- ↑ --</div>
+    <div id="pill">
+      <div class="row" id="row1">↑ --  c --%</div>
+      <div class="row" id="row2">↓ --  m --%</div>
+    </div>
   </div>
   <script>
     const { listen } = window.__TAURI__.event;
@@ -46,40 +58,37 @@
     const row2 = document.getElementById("row2");
     const bar = document.getElementById("bar");
 
-    // ── DEBUG-drag：诊断仪表 ───────────────────────────────────────────────
-    // 交互期间把"发生了什么"直接写到两行文字里；diag 为真时暂停指标覆盖。
-    let diag = false;
-    let diagTimer = null;
-    function setDiag(a, b) {
-      diag = true;
-      row1.textContent = a;
-      row2.textContent = b;
-      if (diagTimer) clearTimeout(diagTimer);
-      diagTimer = setTimeout(() => { diag = false; }, 5000);
-    }
-
+    // 每秒推来的读数（row1/row2 已由后端 format_rows() 逐字符对齐）
     listen("metrics", (e) => {
-      if (diag) return; // 诊断期间不被每秒指标覆盖
       row1.textContent = e.payload.row1;
       row2.textContent = e.payload.row2;
     });
 
-    // 任何鼠标交互的探针（区分 pointer / mouse / click 是否触达 webview）
-    bar.addEventListener("click", () => setDiag("CLICK ok", "tap"));
-    bar.addEventListener("mousedown", () => setDiag("MOUSE dn", "ok"));
+    // ── 点击类事件：左键只用于拖动、右键弹菜单，其余一律吃掉 ─────────────────
+    // click / 双击 / 中键全部吃掉，widget 不响应普通“点击”。
+    ["click", "dblclick", "auxclick"].forEach((t) => {
+      document.addEventListener(t, (e) => { e.preventDefault(); e.stopPropagation(); }, true);
+    });
 
-    // ── 拖动 ───────────────────────────────────────────────────────────────
-    bar.style.cursor = "move";
+    // 右键：不弹浏览器菜单，改为让原生弹出应用菜单（开机启动 / 退出）。
+    // 替代原来的托盘图标——Windows 已去掉托盘，这是菜单的唯一入口。
+    document.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      invoke("show_widget_menu").catch(() => {});
+    });
+
+    // ── 拖动（水平锁行，且仅在真正移动后才算/才存）──────────────────────────
+    // 无系统标题栏，用 pointer 事件手搓：整窗都是抓取区。
+    // 纯按下不动 = 点击 → 什么都不做（不存位置）。
     let dragging = false;
+    let moved = false;
     let lastX = 0;
-    let moves = 0;
 
     bar.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return; // 只左键拖动；右键留给菜单
       dragging = true;
+      moved = false;
       lastX = e.screenX;
-      moves = 0;
-      bar.style.background = "rgba(200, 0, 0, 0.85)"; // 按下变红
-      setDiag("PTR dn", "ok");
       try { bar.setPointerCapture(e.pointerId); } catch (_) {}
       e.preventDefault();
     });
@@ -89,21 +98,17 @@
       const cssDx = e.screenX - lastX;
       if (cssDx !== 0) {
         lastX = e.screenX;
-        moves++;
+        moved = true;
         const dx = Math.round(cssDx * (window.devicePixelRatio || 1));
-        setDiag("MV " + moves, "dx " + dx);
-        invoke("move_widget", { dx })
-          .catch((err) => setDiag("INV ERR", String(err).slice(0, 12)));
+        invoke("move_widget", { dx }).catch(() => {});
       }
     });
 
     const endDrag = (e) => {
       if (!dragging) return;
       dragging = false;
-      bar.style.background = "rgba(40, 40, 40, 0.6)";
       try { bar.releasePointerCapture(e.pointerId); } catch (_) {}
-      invoke("save_widget_pos")
-        .catch((err) => setDiag("SAVE ERR", String(err).slice(0, 12)));
+      if (moved) invoke("save_widget_pos").catch(() => {}); // 纯点击不存位置
     };
     bar.addEventListener("pointerup", endDrag);
     bar.addEventListener("pointercancel", endDrag);

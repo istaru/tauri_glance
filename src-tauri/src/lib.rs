@@ -3,9 +3,12 @@ use std::{sync::Mutex, time::Duration};
 use sysinfo::{Networks, System};
 use tauri::{
     menu::{CheckMenuItem, Menu, PredefinedMenuItem},
-    tray::TrayIconBuilder,
     AppHandle, Manager,
 };
+// 托盘图标只在 macOS 创建——它是 macOS 的显示本体。
+// Windows/Linux 去掉冗余托盘，菜单由 widget 右键弹出（show_widget_menu）。
+#[cfg(target_os = "macos")]
+use tauri::tray::TrayIconBuilder;
 // 仅 macOS 在托盘菜单栏里画文字图标（Core Text 系统字体）；Windows/Linux 走悬浮窗
 #[cfg(target_os = "macos")]
 use tauri::image::Image;
@@ -15,9 +18,9 @@ use tauri::image::Image;
 // Windows/Linux 不在托盘画文字，改用悬浮 WebView 小窗，故无需这些常量。
 #[cfg(target_os = "macos")]
 const SCALE: u32 = 2;
-// 9 列 × 14px(cell) + 左右内边距 ≈ 132px(@2x) → 66 逻辑像素，刚好包住文字
+// 12 列 × 14px(cell) + 左右内边距 ≈ 176px(@2x) → 88 逻辑像素，刚好包住文字
 #[cfg(target_os = "macos")]
-const ICON_W: u32 = 66;
+const ICON_W: u32 = 88;
 #[cfg(target_os = "macos")]
 const ICON_H: u32 = 20;
 #[cfg(target_os = "macos")]
@@ -43,14 +46,15 @@ fn format_speed(bps: f64) -> (String, &'static str) {
 }
 
 // macOS 菜单栏图标 与 Windows/Linux 悬浮窗 共用的两行版式（单一来源，逐字符一致）：
-//   row1 = "c97% m77%"   （CPU 组与内存组之间留一个空格）
-//   row2 = "↓66B ↑ 0B"   （下载组与上传组之间留一个空格；数字右对齐宽度 2）
+//   row1 = "↑ .4M  c  8%"   （上排：上传速度 + CPU）
+//   row2 = "↓ 27K  m 57%"   （下排：下载速度 + 内存）
+// 每组 = 符号 + 空格 + 右对齐宽度 2 的数字 + 单位/%；左右两组间留 2 空格。整行 12 字符。
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn format_rows(cpu: i32, mem: i32, down_bps: f64, up_bps: f64) -> (String, String) {
     let (d_num, d_unit) = format_speed(down_bps);
     let (u_num, u_unit) = format_speed(up_bps);
-    let row1 = format!("c{:>2}% m{:>2}%", cpu.min(99), mem.min(99));
-    let row2 = format!("↓{:>2}{} ↑{:>2}{}", d_num, d_unit, u_num, u_unit);
+    let row1 = format!("↑ {:>2}{}  c {:>2}%", u_num, u_unit, cpu.min(99));
+    let row2 = format!("↓ {:>2}{}  m {:>2}%", d_num, d_unit, mem.min(99));
     (row1, row2)
 }
 
@@ -243,8 +247,8 @@ struct Metrics {
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 #[derive(Clone, serde::Serialize)]
 struct MetricsPayload {
-    row1: String, // 例 "c97%m77%"
-    row2: String, // 例 "↓66B↑ 0B"
+    row1: String, // 例 "↑ .4M  c  8%"
+    row2: String, // 例 "↓ 27K  m 57%"
 }
 
 fn collect_metrics(state: &SysState) -> Metrics {
@@ -315,6 +319,14 @@ fn start_monitor(app: AppHandle) {
                     m.upload_bps,
                 );
                 let _ = app.emit("metrics", MetricsPayload { row1, row2 });
+
+                // Windows/Linux：每秒重新声明「置顶 + 可见」。Windows 上点 ^「显示隐藏
+                // 图标」浮出窗等操作会把 widget 抢到后面并盖住；这里把它顶回来并重绘，
+                // 保证除用户点「退出」外任何时候都不消失（Linux 一并保持同款行为）。
+                if let Some(win) = app.get_webview_window("widget") {
+                    let _ = win.show();
+                    let _ = win.set_always_on_top(true);
+                }
             }
 
             // macOS：把指标渲染进托盘菜单栏像素图标
@@ -507,6 +519,19 @@ fn save_widget_pos(app: AppHandle) {
     }
 }
 
+// Windows/Linux：widget 右键 → 在光标处弹出与 macOS 托盘相同的菜单（开机启动 / 退出）。
+// 二者都不建托盘图标，这是菜单的唯一入口；点击事件统一由 Builder::on_menu_event 处理。
+#[tauri::command]
+fn show_widget_menu(app: AppHandle) {
+    let _ = &app;
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    if let Some(win) = app.get_webview_window("widget") {
+        if let Ok(menu) = build_menu(&app) {
+            let _ = win.popup_menu(&menu);
+        }
+    }
+}
+
 // ── 入口 ────────────────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -519,37 +544,43 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![]),
         ))
-        .invoke_handler(tauri::generate_handler![move_widget, save_widget_pos])
+        .invoke_handler(tauri::generate_handler![
+            move_widget,
+            save_widget_pos,
+            show_widget_menu
+        ])
+        // app 级菜单事件：托盘菜单（macOS/Linux）与 widget 右键弹出菜单（Windows）共用。
+        .on_menu_event(|app, event| {
+            if event.id.as_ref() == "autostart" {
+                use tauri_plugin_autostart::ManagerExt;
+                let al = app.autolaunch();
+                if al.is_enabled().unwrap_or(false) {
+                    let _ = al.disable();
+                } else {
+                    let _ = al.enable();
+                }
+            }
+        })
         .manage(SysState::new())
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
-            let menu = build_menu(app.handle())?;
-
-            let builder = TrayIconBuilder::with_id("main")
-                .icon(app.default_window_icon().unwrap().clone())
-                .menu(&menu)
-                .on_menu_event(|app, event| {
-                    if event.id.as_ref() == "autostart" {
-                        use tauri_plugin_autostart::ManagerExt;
-                        let al = app.autolaunch();
-                        if al.is_enabled().unwrap_or(false) {
-                            let _ = al.disable();
-                        } else {
-                            let _ = al.enable();
-                        }
-                    }
-                });
-
-            // 标记初始图标为 template，深/浅色由系统自动处理
+            // 托盘图标只在 macOS 创建——它是 macOS 的显示本体（每秒重绘读数）。
+            // Windows/Linux 都去掉这个冗余图标：菜单改由 widget 右键弹出（见 show_widget_menu），
+            // 菜单点击事件统一由 Builder::on_menu_event 处理。
             #[cfg(target_os = "macos")]
-            let builder = builder.icon_as_template(true);
-
-            builder.build(app)?;
+            {
+                let menu = build_menu(app.handle())?;
+                TrayIconBuilder::with_id("main")
+                    .icon(app.default_window_icon().unwrap().clone())
+                    .menu(&menu)
+                    .icon_as_template(true) // 深/浅色由系统自动处理
+                    .build(app)?;
+            }
 
             // Windows/Linux：创建指标小窗（无边框 / 透明 / 跳过任务栏）。
-            // 尺寸刚好容纳两行各 9 个等宽字符 —— 内容定宽，故固定尺寸即"自适应"。
+            // 尺寸刚好容纳两行各 12 个等宽字符 —— 内容定宽，故固定尺寸即"自适应"。
             // 不开点击穿透：widget 需接收鼠标以支持拖动定位。
             // macOS 不创建窗口，继续用菜单栏托盘图标。
             #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -568,7 +599,7 @@ pub fn run() {
                 .resizable(false)
                 .shadow(false)
                 .focused(false)
-                .inner_size(82.0, 36.0)
+                .inner_size(104.0, 36.0)
                 .build()?;
 
                 // Windows：把顶层窗口叠加定位到任务栏上（默认时钟左侧，有存档则用存档 x）
@@ -612,7 +643,7 @@ pub fn run() {
 mod preview {
     #[test]
     fn preview_icon() {
-        let px = super::render_icon(8, 57, 27_000.0, 400_000.0); // c 8% m57% ↓27K ↑.4M
+        let px = super::render_icon(8, 57, 27_000.0, 400_000.0); // 上：↑.3M c 8%／下：↓26K m57%
         let (w, h) = (super::PW, super::PH);
         let mut img = image::RgbaImage::new(w, h);
         for y in 0..h {
@@ -623,7 +654,7 @@ mod preview {
                 img.put_pixel(x, y, image::Rgba([v, v, v, 255]));
             }
         }
-        let out = "/private/tmp/claude-501/-Users-julian-AIProjects-tauri-glance/07326ce3-6888-44e7-9b66-246e947b71ec/scratchpad/icon_preview.png";
+        let out = "/private/tmp/claude-501/-Users-julian-AIProjects-tauri-glance/a8b05a9d-3408-4e13-b0af-d9f56920b0a5/scratchpad/icon_preview.png";
         img.save(out).unwrap();
         println!("wrote {out}");
     }
