@@ -206,7 +206,7 @@ open /Applications/看一眼.app
 - **后台线程**：每秒采集指标 → 按平台分发渲染
 - **平台渲染分叉**（关键）：
   - **macOS**：用 **Core Text 以加粗系统字体**（`kCTFontEmphasizedSystemFontType`）把两行版式光栅化进**菜单栏托盘图标**（`render_icon` 用 `CGBitmapContext` + `CTLine`）。逐字符在 14px 等宽格子里居中绘制、字号 18px（@2x）——系统字体抗锯齿、数字每秒变化不抖动、与 Win/Linux 等宽两行版式一致。黑字 + template 自动深/浅色反相。（注意 `CGBitmapContext` 原点在左下角，故上排用较大 y。）渲染效果可用 `cargo test --lib preview_icon` 导出 PNG 肉眼核对。
-  - **Windows / Linux**：系统托盘只能放固定小正方形图标，塞不下两行各 12 字符的文字。故二者**都不在托盘画文字**，改为在屏幕右下角创建一个**悬浮 WebView 小窗**（`widget`，无边框/透明/置顶/跳过任务栏），后台线程每秒 `emit("metrics")` 推 `MetricsPayload`（两行文本 `row1`/`row2`，由三平台共用的 `format_rows()` 生成，保证版式逐字符一致），由 `ui/index.html` 按 macOS 同款**两行布局**（`↑ .4M  c  8%` / `↓ 27K  m 57%`，即「箭头+速度」在左、「c/m+百分比」在右，等宽 + `white-space:pre` 保留对齐空格）渲染。**菜单入口**：**Windows/Linux 都不建托盘图标**（避免和悬浮窗的读数重复），统一改为**右键悬浮窗**弹出菜单（`show_widget_menu` 命令调 `WebviewWindow::popup_menu`）。菜单点击事件三端统一由 `Builder::on_menu_event` 处理。**Windows/Linux 功能对齐**：拖动定位 + `widget_x` 持久化、右键菜单、每秒重新置顶+show（保证除「退出」外不消失）三端一致；仅**定位方式**因平台不同（Windows 叠在任务栏那条上，Linux 贴屏幕右下角）。前端资源 `frontendDist: "../ui"`，权限见 `capabilities/default.json`（`widget` 窗口）。
+  - **Windows / Linux**：系统托盘只能放固定小正方形图标，塞不下两行各 9 字符的文字。故二者**都不在托盘画文字**，改为在屏幕右下角创建一个**悬浮 WebView 小窗**（`widget`，无边框/透明/置顶/跳过任务栏），后台线程每秒 `emit("metrics")` 推 `MetricsPayload`（两行文本 `row1`/`row2`，由三平台共用的 `format_rows()` 生成，保证版式逐字符一致），由 `ui/index.html` 按 macOS 同款**两行布局**（`↑.4M c 8%` / `↓27K m57%`，即「箭头+速度」在左、「c/m+百分比」在右，数字右对齐宽 2、两组间 1 空格，等宽 + `white-space:pre` 保留对齐空格）渲染。**读数版式的权威规范见 [`docs/ui-spec.md`](docs/ui-spec.md)**（布局/数字格式化/速度小数点语义/三端渲染/改版式入口）。**菜单入口**：**Windows/Linux 都不建托盘图标**（避免和悬浮窗的读数重复），统一改为**右键悬浮窗**弹出菜单（`show_widget_menu` 命令调 `WebviewWindow::popup_menu`）。菜单点击事件三端统一由 `Builder::on_menu_event` 处理。**Windows/Linux 功能对齐**：拖动定位 + `widget_x` 持久化、右键菜单、每秒重新置顶+show（保证除「退出」外不消失）三端一致；仅**定位方式**因平台不同（Windows 叠在任务栏那条上，Linux 贴屏幕右下角）。前端资源 `frontendDist: "../ui"`，权限见 `capabilities/default.json`（`widget` 窗口）。
   - Linux 注意：各桌面环境（GNOME 顶栏 / KDE/XFCE 底栏）面板位置与透明合成支持不一，悬浮窗的定位（默认右下角、减 48px 面板高）与透明/穿透行为可能需按 DE 调整。
 
 ### 9.2 深/浅色适配要点
@@ -257,6 +257,25 @@ npx tauri build
 
 > 悬浮窗说明：macOS 菜单栏可放任意宽的条状自定义图像，Windows/Linux 通知区域只能放固定小方块图标，塞不下两行文字（Win11 也无公开 API 往任务栏画自定义文字，旧 Deskband 已移除）。故 Windows/Linux 用置顶悬浮 WebView 小窗复刻 macOS 的两行读数版式。
 
+### 9.9 功能规范：Linux 与 Windows 必须对等
+
+**硬性规则**：**Windows 上的所有功能与显示，Linux 都必须同步保持一致**。任何改动 Windows 悬浮窗行为/显示的 PR，都要在同一改动里让 Linux 跟上——不允许出现"只做了 Windows、Linux 留待以后"。评审与自测都要按这条检查。
+
+当前已对等的项（改动时逐项确认 Linux 未落下）：
+
+| 功能/显示 | 实现 | 对等做法 |
+|-----------|------|----------|
+| 两行读数版式 | `format_rows()` 单一来源 | 同一份字符串，二者逐字符一致（见 `docs/ui-spec.md`） |
+| 无托盘图标 | 托盘仅 `#[cfg(macos)]` | Windows/Linux 都不建托盘 |
+| 右键菜单 | `show_widget_menu` → `popup_menu` | `#[cfg(any(windows, linux))]` 同时覆盖 |
+| 每秒重新置顶+show（除退出外不消失） | 每秒 tick | 二者共用同一段，无平台门控 |
+| 拖动定位 + `widget_x` 持久化 | `move_widget`/`save_widget_pos` | `#[cfg(any(windows, linux))]` |
+| 禁用普通点击、左键仅拖动 | `ui/index.html`（三端共用前端） | 同一份 HTML |
+
+**唯一允许的平台差异 = 悬浮窗定位方式**（这是 OS 能力所限、不可调和）：Windows 叠在任务栏那条上（`place_on_taskbar` 用 `Shell_TrayWnd` 坐标），Linux 贴屏幕右下角（`set_position`，SetParent 是 Win32 专属）。除此之外，功能/显示不得出现平台分叉。
+
+> 新增 Windows 功能的默认写法：cfg 门控用 `#[cfg(any(target_os = "windows", target_os = "linux"))]` 而非单 `windows`，除非该功能确实依赖 Win32-only API（那属于上面"唯一允许的差异"，需在本节或 ADR 里记录理由）。
+
 ---
 
 ## 协作约定
@@ -276,3 +295,7 @@ Issue 追踪在仓库的 GitHub Issues（使用 `gh` CLI）。详见 `docs/agent
 ### 领域文档
 
 单上下文布局（根目录 `CONTEXT.md` + `docs/adr/`）。详见 `docs/agents/domain.md`。
+
+### UI 显示规范
+
+两行读数版式的权威规范（布局/数字格式化/速度小数点语义/三端渲染）：`docs/ui-spec.md`。改版式**只改 `format_rows()`**，并同步该文件。

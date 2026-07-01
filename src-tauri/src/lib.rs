@@ -18,9 +18,9 @@ use tauri::image::Image;
 // Windows/Linux 不在托盘画文字，改用悬浮 WebView 小窗，故无需这些常量。
 #[cfg(target_os = "macos")]
 const SCALE: u32 = 2;
-// 12 列 × 14px(cell) + 左右内边距 ≈ 176px(@2x) → 88 逻辑像素，刚好包住文字
+// 9 列 × 14px(cell) + 左右内边距 ≈ 132px(@2x) → 66 逻辑像素，刚好包住文字
 #[cfg(target_os = "macos")]
-const ICON_W: u32 = 88;
+const ICON_W: u32 = 66;
 #[cfg(target_os = "macos")]
 const ICON_H: u32 = 20;
 #[cfg(target_os = "macos")]
@@ -46,15 +46,16 @@ fn format_speed(bps: f64) -> (String, &'static str) {
 }
 
 // macOS 菜单栏图标 与 Windows/Linux 悬浮窗 共用的两行版式（单一来源，逐字符一致）：
-//   row1 = "↑ .4M  c  8%"   （上排：上传速度 + CPU）
-//   row2 = "↓ 27K  m 57%"   （下排：下载速度 + 内存）
-// 每组 = 符号 + 空格 + 右对齐宽度 2 的数字 + 单位/%；左右两组间留 2 空格。整行 12 字符。
+//   row1 = "↑.4M c 8%"   （上排：上传速度 + CPU）
+//   row2 = "↓27K m57%"   （下排：下载速度 + 内存）
+// 每组 = 符号 + 右对齐宽度 2 的数字（个位数左补 1 空格以对齐列）+ 单位/%；两组间留 1 空格。整行 9 字符。
+// 注：速度里的 `.`（如 .4M）是小数点 = 0.4 MB/s，非补位符；百分比不用小数点（.8% 会误读成 0.8%）。
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn format_rows(cpu: i32, mem: i32, down_bps: f64, up_bps: f64) -> (String, String) {
     let (d_num, d_unit) = format_speed(down_bps);
     let (u_num, u_unit) = format_speed(up_bps);
-    let row1 = format!("↑ {:>2}{}  c {:>2}%", u_num, u_unit, cpu.min(99));
-    let row2 = format!("↓ {:>2}{}  m {:>2}%", d_num, d_unit, mem.min(99));
+    let row1 = format!("↑{:>2}{} c{:>2}%", u_num, u_unit, cpu.min(99));
+    let row2 = format!("↓{:>2}{} m{:>2}%", d_num, d_unit, mem.min(99));
     (row1, row2)
 }
 
@@ -247,8 +248,8 @@ struct Metrics {
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 #[derive(Clone, serde::Serialize)]
 struct MetricsPayload {
-    row1: String, // 例 "↑ .4M  c  8%"
-    row2: String, // 例 "↓ 27K  m 57%"
+    row1: String, // 例 "↑.4M c 8%"
+    row2: String, // 例 "↓27K m57%"
 }
 
 fn collect_metrics(state: &SysState) -> Metrics {
@@ -323,9 +324,16 @@ fn start_monitor(app: AppHandle) {
                 // Windows/Linux：每秒重新声明「置顶 + 可见」。Windows 上点 ^「显示隐藏
                 // 图标」浮出窗等操作会把 widget 抢到后面并盖住；这里把它顶回来并重绘，
                 // 保证除用户点「退出」外任何时候都不消失（Linux 一并保持同款行为）。
+                // Windows 用直接 Win32 调用（force_topmost）而非 tao 的 show/set_always_on_top——
+                // 后者标志位不变时会被 tao 自身的 diff 缓存吞掉、根本不下发系统调用，见 force_topmost 注释。
                 if let Some(win) = app.get_webview_window("widget") {
-                    let _ = win.show();
-                    let _ = win.set_always_on_top(true);
+                    #[cfg(target_os = "windows")]
+                    force_topmost(&win);
+                    #[cfg(target_os = "linux")]
+                    {
+                        let _ = win.show();
+                        let _ = win.set_always_on_top(true);
+                    }
                 }
             }
 
@@ -412,6 +420,36 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let sep = PredefinedMenuItem::separator(app)?;
     let quit = PredefinedMenuItem::quit(app, Some(if cn { "退出" } else { "Quit" }))?;
     Menu::with_items(app, &[&autostart, &sep, &quit])
+}
+
+// ── Windows：强制把 widget 顶回 z-order 最前 ──────────────────────────────────
+// 根因：tao(0.35.3) 的 Windows 后端把 always_on_top/visible 缓存成 WindowFlags 位集，
+// apply_diff() 里 `if diff == WindowFlags::empty() { return; }`——一旦这两个标志已经是
+// true（第一帧之后永远如此），后续每次 win.show()/set_always_on_top(true) 都在这行直接
+// return，根本不会调用 ShowWindow/SetWindowPos。点通知区「显示隐藏图标」^ 箭头会弹出
+// explorer.exe 自己的置顶浮出窗，把我们的 widget 压到它下面；而每秒的"重新置顶"由于上述
+// 缓存直接空转，widget 就再也翻不回最前。绕过 tao 的缓存层，每 tick 直接调 Win32 API 强制
+// 重新入栈，不依赖它记的状态。
+#[cfg(target_os = "windows")]
+fn force_topmost(win: &tauri::WebviewWindow) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, ShowWindow, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+        SW_SHOWNOACTIVATE,
+    };
+    let Ok(hwnd) = win.hwnd() else { return };
+    let hwnd = hwnd.0 as windows_sys::Win32::Foundation::HWND;
+    unsafe {
+        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        );
+    }
 }
 
 // ── Windows：把顶层透明窗口叠加在任务栏上（不 SetParent）──────────────────────
@@ -580,7 +618,7 @@ pub fn run() {
             }
 
             // Windows/Linux：创建指标小窗（无边框 / 透明 / 跳过任务栏）。
-            // 尺寸刚好容纳两行各 12 个等宽字符 —— 内容定宽，故固定尺寸即"自适应"。
+            // 尺寸刚好容纳两行各 9 个等宽字符 —— 内容定宽，故固定尺寸即"自适应"。
             // 不开点击穿透：widget 需接收鼠标以支持拖动定位。
             // macOS 不创建窗口，继续用菜单栏托盘图标。
             #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -599,7 +637,7 @@ pub fn run() {
                 .resizable(false)
                 .shadow(false)
                 .focused(false)
-                .inner_size(104.0, 36.0)
+                .inner_size(82.0, 36.0)
                 .build()?;
 
                 // Windows：把顶层窗口叠加定位到任务栏上（默认时钟左侧，有存档则用存档 x）
