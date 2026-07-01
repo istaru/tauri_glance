@@ -402,26 +402,23 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     Menu::with_items(app, &[&autostart, &sep, &quit])
 }
 
-// ── Windows：把悬浮窗 SetParent 进任务栏，作为 Shell_TrayWnd 的子窗口 ──────────
-// 注意：这是非官方手法，跨 Windows 版本/更新可能失效（Win11 无受支持的任务栏嵌入 API）。
+// ── Windows：把顶层透明窗口叠加在任务栏上（不 SetParent）──────────────────────
+// 之前用 SetParent 做成任务栏子窗口虽然"真嵌入"，但子窗口收不到鼠标事件 → 无法拖动。
+// 改为顶层置顶窗口叠在任务栏那一条上：视觉上仍像嵌在任务栏里，但能正常收鼠标、可拖动。
+// 用屏幕坐标定位（与 Linux 统一），默认放在时钟区(TrayNotifyWnd)左侧、垂直居中于任务栏。
 #[cfg(target_os = "windows")]
-fn embed_into_taskbar(win: &tauri::WebviewWindow) {
+fn place_on_taskbar(win: &tauri::WebviewWindow) {
+    use tauri::PhysicalPosition;
     use windows_sys::Win32::Foundation::RECT;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        FindWindowExW, FindWindowW, GetWindowLongPtrW, GetWindowRect, SetParent,
-        SetWindowLongPtrW, SetWindowPos, GWL_STYLE, SWP_NOZORDER, SWP_SHOWWINDOW, WS_CHILD,
-        WS_POPUP, WS_VISIBLE,
-    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowExW, FindWindowW, GetWindowRect};
 
-    // 生成 null 结尾的宽字符串
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
     }
 
-    // 取自身 HWND（tauri 的 windows::HWND，其 .0 是 *mut c_void，可直接当 windows-sys HWND）
-    let hwnd = match win.hwnd() {
-        Ok(h) => h.0 as _,
-        Err(_) => return,
+    let (w, h) = match win.outer_size() {
+        Ok(s) => (s.width as i32, s.height as i32),
+        Err(_) => (132, 44),
     };
 
     unsafe {
@@ -430,56 +427,32 @@ fn embed_into_taskbar(win: &tauri::WebviewWindow) {
         if taskbar.is_null() {
             return;
         }
-
-        // 1) 去掉 WS_POPUP、加 WS_CHILD，使其成为可被 SetParent 收纳的子窗口
-        let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
-        let new_style =
-            (style & !(WS_POPUP as isize)) | (WS_CHILD as isize) | (WS_VISIBLE as isize);
-        SetWindowLongPtrW(hwnd, GWL_STYLE, new_style);
-
-        // 2) 认任务栏为父窗口
-        SetParent(hwnd, taskbar);
-
-        // 3) 量任务栏尺寸 + 自身物理尺寸
+        // 任务栏屏幕矩形
         let mut tb = RECT { left: 0, top: 0, right: 0, bottom: 0 };
         GetWindowRect(taskbar, &mut tb);
-        let tb_h = tb.bottom - tb.top;
-        let (w, h) = match win.outer_size() {
-            Ok(s) => (s.width as i32, s.height as i32),
-            Err(_) => (120, 48),
-        };
 
-        // 4) 定位到时钟区域(TrayNotifyWnd)左侧、垂直居中于任务栏（坐标相对任务栏客户区）
+        // 默认 x：通知区(TrayNotifyWnd)左边缘 = 「显示隐藏图标」的 ^ 箭头左边缘，
+        // 让小窗右边缘紧挨该箭头左侧（GAP=2，视觉上贴住又不压到箭头的 hover 区）。
+        const GAP: i32 = 2;
         let cls_tray = wide("TrayNotifyWnd");
-        let tray = FindWindowExW(
-            taskbar,
-            std::ptr::null_mut(),
-            cls_tray.as_ptr(),
-            std::ptr::null(),
-        );
+        let tray = FindWindowExW(taskbar, std::ptr::null_mut(), cls_tray.as_ptr(), std::ptr::null());
         let default_x = if !tray.is_null() {
             let mut tr = RECT { left: 0, top: 0, right: 0, bottom: 0 };
             GetWindowRect(tray, &mut tr);
-            (tr.left - tb.left) - w - 8
+            tr.left - w - GAP
         } else {
-            (tb.right - tb.left) - w - 200
+            tb.right - w - 200
         };
-        // 用户拖动过则用存档位置（限制在任务栏范围内），否则用默认的时钟左侧
-        let max_x = ((tb.right - tb.left) - w).max(0);
+        // 拖动存档（屏幕 x）优先，限制在任务栏 x 范围内
+        let min_x = tb.left;
+        let max_x = (tb.right - w).max(tb.left);
         let x = load_widget_x(win.app_handle())
-            .map(|sx| sx.clamp(0, max_x))
-            .unwrap_or(default_x);
-        let y = (tb_h - h) / 2;
+            .map(|sx| sx.clamp(min_x, max_x))
+            .unwrap_or(default_x)
+            .clamp(min_x, max_x);
+        let y = tb.top + (tb.bottom - tb.top - h) / 2; // 垂直居中于任务栏
 
-        SetWindowPos(
-            hwnd,
-            std::ptr::null_mut(),
-            x.max(0),
-            y.max(0),
-            w,
-            h,
-            SWP_NOZORDER | SWP_SHOWWINDOW,
-        );
+        let _ = win.set_position(PhysicalPosition::new(x, y));
     }
 }
 
@@ -509,72 +482,27 @@ fn save_widget_x(app: &AppHandle, x: i32) {
     }
 }
 
-// Windows：取 widget 几何信息 (hwnd, 相对父窗口 x, y, 宽, 高, 可用最大 x)
-#[cfg(target_os = "windows")]
-fn widget_geom_win(
-    win: &tauri::WebviewWindow,
-) -> Option<(*mut core::ffi::c_void, i32, i32, i32, i32)> {
-    use windows_sys::Win32::Foundation::RECT;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowW, GetWindowRect};
-    fn wide(s: &str) -> Vec<u16> {
-        s.encode_utf16().chain(std::iter::once(0)).collect()
-    }
-    let hwnd = win.hwnd().ok()?.0 as *mut core::ffi::c_void;
-    unsafe {
-        let cls = wide("Shell_TrayWnd");
-        let taskbar = FindWindowW(cls.as_ptr(), std::ptr::null());
-        if taskbar.is_null() {
-            return None;
-        }
-        let mut wr = RECT { left: 0, top: 0, right: 0, bottom: 0 };
-        GetWindowRect(hwnd, &mut wr);
-        let mut tb = RECT { left: 0, top: 0, right: 0, bottom: 0 };
-        GetWindowRect(taskbar, &mut tb);
-        let w = wr.right - wr.left;
-        let cur_x = wr.left - tb.left; // 相对任务栏
-        let cur_y = wr.top - tb.top;
-        let max_x = ((tb.right - tb.left) - w).max(0);
-        Some((hwnd, cur_x, cur_y, max_x, w))
-    }
-}
-
-// 拖动中：把 widget 水平移动 dx 物理像素（前端 pointermove 实时调用）
+// 拖动中：把 widget 水平移动 dx 物理像素（前端 pointermove 实时调用）。
+// Windows/Linux 都是顶层窗口，统一用屏幕坐标的 set_position 平移（只动 x，保持在任务栏那一行）。
 #[tauri::command]
 fn move_widget(app: AppHandle, dx: i32) {
     let _ = (&app, dx);
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     if let Some(win) = app.get_webview_window("widget") {
-        #[cfg(target_os = "windows")]
-        {
-            use windows_sys::Win32::UI::WindowsAndMessaging::{
-                SetWindowPos, SWP_NOSIZE, SWP_NOZORDER,
-            };
-            if let Some((hwnd, cur_x, cur_y, max_x, _w)) = widget_geom_win(&win) {
-                let new_x = (cur_x + dx).clamp(0, max_x);
-                unsafe {
-                    SetWindowPos(hwnd, std::ptr::null_mut(), new_x, cur_y, 0, 0, SWP_NOZORDER | SWP_NOSIZE);
-                }
-            }
-        }
-        #[cfg(target_os = "linux")]
         if let Ok(pos) = win.outer_position() {
             let _ = win.set_position(tauri::PhysicalPosition::new(pos.x + dx, pos.y));
         }
     }
 }
 
-// 拖动结束：把当前位置存盘
+// 拖动结束：把当前屏幕 x 存盘
 #[tauri::command]
 fn save_widget_pos(app: AppHandle) {
     let _ = &app;
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     if let Some(win) = app.get_webview_window("widget") {
-        #[cfg(target_os = "windows")]
-        let cur = widget_geom_win(&win).map(|(_, x, _, _, _)| x);
-        #[cfg(target_os = "linux")]
-        let cur = win.outer_position().ok().map(|p| p.x);
-        if let Some(x) = cur {
-            save_widget_x(&app, x);
+        if let Ok(pos) = win.outer_position() {
+            save_widget_x(&app, pos.x);
         }
     }
 }
@@ -643,10 +571,9 @@ pub fn run() {
                 .inner_size(82.0, 36.0)
                 .build()?;
 
-                // Windows：SetParent 进 Shell_TrayWnd，真正嵌入任务栏（默认时钟左侧，
-                // 若有拖动存档则用存档位置）
+                // Windows：把顶层窗口叠加定位到任务栏上（默认时钟左侧，有存档则用存档 x）
                 #[cfg(target_os = "windows")]
-                embed_into_taskbar(&win);
+                place_on_taskbar(&win);
 
                 // Linux：SetParent 是 Win32 专属，任务栏嵌入需按桌面环境另案处理。
                 // 暂用悬浮窗贴屏幕右下角（面板位置因 DE 而异，留待真机微调）。
