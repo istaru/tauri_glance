@@ -206,7 +206,7 @@ open /Applications/看一眼.app
 - **后台线程**：每秒采集指标 → 按平台分发渲染
 - **平台渲染分叉**（关键）：
   - **macOS**：用 **Core Text 以加粗系统字体**（`kCTFontEmphasizedSystemFontType`）把两行版式光栅化进**菜单栏托盘图标**（`render_icon` 用 `CGBitmapContext` + `CTLine`）。逐字符在 14px 等宽格子里居中绘制、字号 18px（@2x）——系统字体抗锯齿、数字每秒变化不抖动、与 Win/Linux 等宽两行版式一致。黑字 + template 自动深/浅色反相。（注意 `CGBitmapContext` 原点在左下角，故上排用较大 y。）渲染效果可用 `cargo test --lib preview_icon` 导出 PNG 肉眼核对。
-  - **Windows / Linux**：系统托盘只能放固定小正方形图标，塞不下两行各 8 字符的文字。故二者**都不在托盘画文字**，改为在屏幕右下角创建一个**悬浮 WebView 小窗**（`widget`，无边框/透明/置顶/跳过任务栏/点击穿透），后台线程每秒 `emit("metrics")` 推 `MetricsPayload`（两行文本 `row1`/`row2`，由三平台共用的 `format_rows()` 生成，保证版式逐字符一致），由 `ui/index.html` 按 macOS 同款**两行布局**（`c97%m77%` / `↓66B↑ 0B`，等宽 + `white-space:pre` 保留对齐空格）渲染；托盘只保留静态图标承载菜单。前端资源 `frontendDist: "../ui"`，权限见 `capabilities/default.json`（`widget` 窗口）。
+  - **Windows / Linux**：系统托盘只能放固定小正方形图标，塞不下两行各 12 字符的文字。故二者**都不在托盘画文字**，改为在屏幕右下角创建一个**悬浮 WebView 小窗**（`widget`，无边框/透明/置顶/跳过任务栏），后台线程每秒 `emit("metrics")` 推 `MetricsPayload`（两行文本 `row1`/`row2`，由三平台共用的 `format_rows()` 生成，保证版式逐字符一致），由 `ui/index.html` 按 macOS 同款**两行布局**（`↑ .4M  c  8%` / `↓ 27K  m 57%`，即「箭头+速度」在左、「c/m+百分比」在右，等宽 + `white-space:pre` 保留对齐空格）渲染。**菜单入口**：**Windows/Linux 都不建托盘图标**（避免和悬浮窗的读数重复），统一改为**右键悬浮窗**弹出菜单（`show_widget_menu` 命令调 `WebviewWindow::popup_menu`）。菜单点击事件三端统一由 `Builder::on_menu_event` 处理。**Windows/Linux 功能对齐**：拖动定位 + `widget_x` 持久化、右键菜单、每秒重新置顶+show（保证除「退出」外不消失）三端一致；仅**定位方式**因平台不同（Windows 叠在任务栏那条上，Linux 贴屏幕右下角）。前端资源 `frontendDist: "../ui"`，权限见 `capabilities/default.json`（`widget` 窗口）。
   - Linux 注意：各桌面环境（GNOME 顶栏 / KDE/XFCE 底栏）面板位置与透明合成支持不一，悬浮窗的定位（默认右下角、减 48px 面板高）与透明/穿透行为可能需按 DE 调整。
 
 ### 9.2 深/浅色适配要点
@@ -250,7 +250,8 @@ npx tauri build
 | 项目 | Swift 版 | Tauri 版 |
 |------|----------|----------|
 | 字体 | `monospacedDigitSystemFont(8, .bold)` | macOS 用 Core Text 系统字体（`.AppleSystemUIFont`）；Windows/Linux 用悬浮窗 HTML/CSS |
-| 显示位置 | 菜单栏图标 | macOS 菜单栏托盘图标；Windows 嵌入任务栏（SetParent）；Linux 屏幕右下角悬浮窗 |
+| 显示位置 | 菜单栏图标 | macOS 菜单栏托盘图标；Windows/Linux 顶层置顶悬浮窗（不 SetParent；Windows 叠在任务栏那条上、Linux 贴屏幕右下角） |
+| 托盘图标 | 菜单栏图标即托盘 | 仅 macOS 有托盘；Windows/Linux 去掉托盘，菜单由悬浮窗右键弹出 |
 | 图标位置持久化 | `autosaveName` | macOS 不支持；Windows/Linux 拖动后存 `widget_x` 文件 |
 | 平台 | macOS only | macOS / Windows / Linux |
 
